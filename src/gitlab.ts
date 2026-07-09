@@ -142,6 +142,28 @@ export class GitLab {
     );
   }
 
+  /** MR 全部讨论串（含每条 note 的 resolved 状态），采纳率统计用。 */
+  listDiscussions(project: string | number, iid: number): Promise<Array<{
+    id: string;
+    notes: Array<{ id: number; body: string; author: { username: string }; resolvable: boolean; resolved?: boolean }>;
+  }>> {
+    return this.req("GET", `/projects/${this.proj(project)}/merge_requests/${iid}/discussions?per_page=100`);
+  }
+
+  /** 在已有讨论串里回复（@机器人 对话用）。 */
+  postDiscussionReply(project: string | number, iid: number, discussionId: string, body: string): Promise<unknown> {
+    return this.req(
+      "POST",
+      `/projects/${this.proj(project)}/merge_requests/${iid}/discussions/${encodeURIComponent(discussionId)}/notes`,
+      { body },
+    );
+  }
+
+  /** 某条评论上的表情（👍/👎 反馈）。 */
+  getNoteAwards(project: string | number, iid: number, noteId: number): Promise<Array<{ name: string }>> {
+    return this.req("GET", `/projects/${this.proj(project)}/merge_requests/${iid}/notes/${noteId}/award_emoji`);
+  }
+
   /* ---------------- Issues ---------------- */
 
   createIssue(

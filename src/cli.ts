@@ -15,6 +15,7 @@ const HELP = `mergelens — GitLab AI 代码审查助手
   mergelens review <project> <mr-iid> [--dry-run] [--full]   审查 MR（默认增量：只审上次之后的新提交）
   mergelens stats                                   审查记录统计（数据在 data/reviews.jsonl）
   mergelens summarize <project> <mr-iid> [--dry-run] [--update-desc]   生成 MR 摘要
+  mergelens feedback <project> <mr-iid>             手动结算某 MR 的采纳反馈（合并时会自动结算）
   mergelens issues list <project> [--search 关键词] [--state opened|closed|all]
   mergelens issues create <project> --title "标题" [--desc "描述"] [--labels a,b]
   mergelens serve [--port 3000]                     前台启动服务（Ctrl+C 退出）
@@ -143,6 +144,18 @@ async function main(): Promise<void> {
     case "logs": {
       const { daemonLogs } = await import("./daemon.js");
       daemonLogs(parseInt(arg("--lines") ?? "100", 10));
+      break;
+    }
+
+    case "feedback": {
+      const [project, iidStr] = rest;
+      if (!project || !iidStr) throw new Error("用法：mergelens feedback <project> <mr-iid>");
+      requireToken(cfg);
+      const { collectFeedback } = await import("./feedback.js");
+      const rec = await collectFeedback(cfg, project, parseInt(iidStr, 10));
+      console.log(rec
+        ? `发现 ${rec.findings} 条，采纳（resolved）${rec.resolved}，👍${rec.up} 👎${rec.down}`
+        : "该 MR 上没有 bot 发起的行内讨论");
       break;
     }
 

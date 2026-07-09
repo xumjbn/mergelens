@@ -213,16 +213,28 @@ t("推送消息构造", () => {
 import { renderDashboard } from "../src/web.js";
 import { loadConfig } from "../src/config.js";
 
-t("看板渲染", () => {
+t("看板渲染（含采纳率）", () => {
   const html = renderDashboard([{
     ts: new Date().toISOString(), project: "g/r", iid: 7, title: "标题<script>",
     verdict: "needs-work", critical: 1, serious: 0, suggestion: 2, filtered: 1,
     incremental: false, dryRun: false, durationMs: 90000, model: "m",
-  }], loadConfig());
+  }], [
+    { ts: "2026-07-09T10:00:00Z", project: "g/r", iid: 7, findings: 4, resolved: 3, up: 2, down: 1 },
+  ], loadConfig());
   assert.ok(html.includes("审查看板"));
   assert.ok(html.includes("g/r!7"));
   assert.ok(!html.includes("<script>")); // XSS 转义
   assert.ok(html.includes("⛔ 建议修复"));
+  assert.ok(html.includes("75")); // 采纳率 3/4
+  assert.ok(html.includes("👍2 👎1"));
+});
+
+/* ---- assistant ---- */
+import { stripMention } from "../src/assistant.js";
+
+t("@提及剥离", () => {
+  assert.equal(stripMention("@review-bot 这条是误报吧？", "review-bot"), "这条是误报吧？");
+  assert.equal(stripMention("请 @review-bot 重新审查 @review-bot", "review-bot"), "请  重新审查");
 });
 
 /* ---- json extraction ---- */

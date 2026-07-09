@@ -98,7 +98,7 @@ npx tsx src/cli.ts stop                # 停止
    - GitLab **群组** → Settings → Webhooks（项目级同样支持，路径相同）
    - URL：`http://部署机:3000/webhook`
    - Secret token：与环境变量 `WEBHOOK_SECRET` 一致
-   - 勾选 **Merge request events**（只勾这一个就够）
+   - 勾选 **Merge request events** 和 **Comments**（后者用于 @机器人 对话）
 3. Token 用**群组 Access Token**（群组 → Settings → Access Tokens，Developer 角色 + api scope），
    一个 token 覆盖组下所有项目，评论显示为独立 bot 身份。
 4. 触发规则：**新开 MR、reopen、向 MR 分支 push 新提交**都会自动审查（push 走增量）；
@@ -132,6 +132,22 @@ npx tsx src/cli.ts stop                # 停止
 安全设计：密钥类（GITLAB_TOKEN / AI key / 推送 webhook）**不能**在页面上查看或修改，
 只能走环境变量，页面仅显示已配置/未配置状态；写操作可设 `ADMIN_TOKEN` 环境变量加口令保护
 （公网部署务必设置）。
+
+## 评论区 @机器人 对话
+
+在 MR 评论里 @bot 账号（token 对应的用户），bot 带着该 MR 的 diff 上下文回复，
+在原讨论串里回，不另开评论：
+
+- `@bot 这条是误报吧？` —— bot 重新评估：站得住就有理有据地坚持，确属误报会明确承认
+- `@bot 这里怎么改比较好` —— 给出可直接粘贴的修复代码
+- `@bot 重新审查` —— 触发全量重审
+- `@bot 生成摘要` —— 生成 MR 摘要
+
+## 采纳率统计
+
+bot 的行内评论都是可 resolve 的讨论。**MR 合并时自动结算**：被 resolve 的发现视为
+「采纳」，同时统计评论上的 👍/👎 表情。结果进 `data/feedback.jsonl`，看板显示总采纳率。
+也可手动结算：`mergelens feedback <project> <mr-iid>`。
 
 ## IM 推送（钉钉 / 企业微信）
 

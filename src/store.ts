@@ -23,34 +23,48 @@ export interface ReviewRecord {
   model: string;
 }
 
+/** MR 合并时结算的反馈：resolve = 采纳，👍/👎 = 显式反馈 */
+export interface FeedbackRecord {
+  ts: string;
+  project: string;
+  iid: number;
+  /** bot 发起的可 resolve 讨论数（行内发现数） */
+  findings: number;
+  /** 其中被 resolve 的数量（视为采纳） */
+  resolved: number;
+  up: number;
+  down: number;
+}
+
 function dataDir(): string {
   return process.env.MERGELENS_DATA ?? join(process.cwd(), "data");
 }
 
-function reviewsFile(): string {
-  return join(dataDir(), "reviews.jsonl");
-}
-
-export function recordReview(r: ReviewRecord): void {
+function appendJsonl(file: string, obj: unknown): void {
   try {
     mkdirSync(dataDir(), { recursive: true });
-    appendFileSync(reviewsFile(), JSON.stringify(r) + "\n", "utf8");
+    appendFileSync(join(dataDir(), file), JSON.stringify(obj) + "\n", "utf8");
   } catch (err) {
-    console.error("[store] 写入审查记录失败：" + (err as Error).message);
+    console.error(`[store] 写入 ${file} 失败：` + (err as Error).message);
   }
 }
 
-export function readReviews(): ReviewRecord[] {
-  const f = reviewsFile();
+function readJsonl<T>(file: string): T[] {
+  const f = join(dataDir(), file);
   if (!existsSync(f)) return [];
   return readFileSync(f, "utf8")
     .split("\n")
     .filter(Boolean)
     .map((l) => {
-      try { return JSON.parse(l) as ReviewRecord; } catch { return null; }
+      try { return JSON.parse(l) as T; } catch { return null; }
     })
-    .filter((r): r is ReviewRecord => r !== null);
+    .filter((r): r is T => r !== null);
 }
+
+export const recordReview = (r: ReviewRecord): void => appendJsonl("reviews.jsonl", r);
+export const readReviews = (): ReviewRecord[] => readJsonl<ReviewRecord>("reviews.jsonl");
+export const recordFeedback = (r: FeedbackRecord): void => appendJsonl("feedback.jsonl", r);
+export const readFeedback = (): FeedbackRecord[] => readJsonl<FeedbackRecord>("feedback.jsonl");
 
 /** stats 命令的汇总输出。 */
 export function formatStats(records: ReviewRecord[]): string {

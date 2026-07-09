@@ -1,11 +1,15 @@
 import type { Config } from "./types.js";
-import type { ReviewRecord } from "./store.js";
+import type { FeedbackRecord, ReviewRecord } from "./store.js";
 
 const esc = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 /** 服务端渲染的看板首页：指标、14 天趋势、最近审查列表。 */
-export function renderDashboard(records: ReviewRecord[], cfg: Config): string {
+export function renderDashboard(records: ReviewRecord[], feedback: FeedbackRecord[], cfg: Config): string {
+  const fSum = (f: (r: FeedbackRecord) => number) => feedback.reduce((s, r) => s + f(r), 0);
+  const fbFindings = fSum((r) => r.findings);
+  const fbResolved = fSum((r) => r.resolved);
+  const adoption = fbFindings > 0 ? Math.round((fbResolved / fbFindings) * 100) : null;
   const total = records.length;
   const week = records.filter((r) => Date.now() - Date.parse(r.ts) < 7 * 86400_000);
   const sum = (f: (r: ReviewRecord) => number) => records.reduce((s, r) => s + f(r), 0);
@@ -95,6 +99,7 @@ svg{display:block;width:100%;height:auto}
   <div class="card"><div class="k">累计审查</div><div class="v">${total}<small> 次（近7天 ${week.length}）</small></div></div>
   <div class="card"><div class="k">发现问题</div><div class="v">${critical + serious + suggestion}<small> 🔴${critical} 🟠${serious} 🟡${suggestion}</small></div></div>
   <div class="card"><div class="k">门禁拦截率</div><div class="v">${blockRate}<small>%（${needsWork} 次建议修复）</small></div></div>
+  <div class="card"><div class="k">建议采纳率</div><div class="v">${adoption === null ? "—" : adoption + '<small>%</small>'}<small> 👍${fSum((r) => r.up)} 👎${fSum((r) => r.down)} · 已结算 ${feedback.length} 个 MR</small></div></div>
   <div class="card"><div class="k">低置信度自动过滤</div><div class="v">${sum((r) => r.filtered)}<small> 条（降噪）</small></div></div>
 </div>
 

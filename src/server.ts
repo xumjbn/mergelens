@@ -4,8 +4,10 @@ import type { Config } from "./types.js";
 import { fileConfigToYaml, loadConfig, requireAiKey, requireToken, serverConfigPath } from "./config.js";
 import { GitLab } from "./gitlab.js";
 import { reviewMr } from "./review/pipeline.js";
-import { readReviews } from "./store.js";
+import { readFeedback, readReviews } from "./store.js";
 import { renderConfigPage, renderDashboard } from "./web.js";
+import { answerMention, stripMention } from "./assistant.js";
+import { collectFeedback } from "./feedback.js";
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((res) => {
@@ -42,6 +44,10 @@ export function startServer(cfg: Config, port: number): void {
     if (recentEvents.length > 30) recentEvents.shift();
     console.error(`[webhook] ${e.kind}${e.action ? "/" + e.action : ""} ${e.project ?? ""} → ${e.decision}`);
   };
+  // bot 自己的用户名（@提及检测、过滤自己发的评论），首次用到时拉取
+  let botUser: string | null = null;
+  const getBotUser = async (): Promise<string> =>
+    (botUser ??= (await new GitLab(cfg).getCurrentUser()).username);
 
   async function drain(): Promise<void> {
     const job = queue.shift();
@@ -62,7 +68,7 @@ export function startServer(cfg: Config, port: number): void {
   const server = createServer((req, res) => {
     if (req.method === "GET" && (req.url === "/" || req.url === "/dashboard")) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      return void res.end(renderDashboard(readReviews(), cfg));
+      return void res.end(renderDashboard(readReviews(), readFeedback(), cfg));
     }
     if (req.method === "GET" && req.url === "/config") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -132,15 +138,56 @@ export function startServer(cfg: Config, port: number): void {
         const event = JSON.parse(body);
         const kind = event.object_kind ?? "(无 object_kind)";
         const projectPath = event.project?.path_with_namespace ?? String(event.project?.id ?? "?");
+
+        // 评论事件：@机器人 对话
+        if (kind === "note") {
+          const attrs = event.object_attributes ?? {};
+          const mrIid = event.merge_request?.iid;
+          if (attrs.noteable_type !== "MergeRequest" || !mrIid) {
+            track({ ts, kind, project: projectPath, decision: "忽略：非 MR 下的评论" });
+            return;
+          }
+          void (async () => {
+            try {
+              const bot = await getBotUser();
+              const author = event.user?.username ?? "";
+              if (author === bot) return; // 自己发的评论，静默跳过
+              const note = String(attrs.note ?? "");
+              if (!note.includes(`@${bot}`)) {
+                track({ ts, kind, project: `${projectPath}!${mrIid}`, decision: `忽略：评论未 @${bot}` });
+                return;
+              }
+              track({ ts, kind, project: `${projectPath}!${mrIid}`, decision: `回复 @${author} 的提问` });
+              await answerMention(cfg, event.project.id, mrIid, {
+                question: stripMention(note, bot),
+                author,
+                discussionId: attrs.discussion_id ?? undefined,
+              });
+            } catch (err) {
+              console.error("[assistant] 回复失败：" + (err as Error).message);
+            }
+          })();
+          return;
+        }
+
         if (kind !== "merge_request") {
-          track({ ts, kind, project: projectPath, decision: "忽略：只处理 Merge request events（检查 webhook 是否勾选了别的事件）" });
+          track({ ts, kind, project: projectPath, decision: "忽略：只处理 Merge request / Comments 事件（检查 webhook 勾选）" });
           return;
         }
         const attrs = event.object_attributes ?? {};
         const action = attrs.action as string;
+
+        // MR 合并：结算采纳反馈（resolve/👍/👎）
+        if (action === "merge") {
+          track({ ts, kind, action, project: `${projectPath}!${attrs.iid}`, decision: "MR 已合并，结算采纳反馈" });
+          void collectFeedback(cfg, event.project.id, attrs.iid)
+            .catch((err) => console.error("[feedback] 结算失败：" + (err as Error).message));
+          return;
+        }
+
         const isCodeUpdate = action === "update" && attrs.oldrev;
         if (action !== "open" && action !== "reopen" && !isCodeUpdate) {
-          track({ ts, kind, action, project: projectPath, decision: `忽略：action=${action} 不触发审查（只响应 open/reopen/push 新提交）` });
+          track({ ts, kind, action, project: projectPath, decision: `忽略：action=${action} 不触发审查（只响应 open/reopen/push 新提交/merge）` });
           return;
         }
         const project = event.project?.id;
