@@ -20,6 +20,9 @@ const HELP = `mergelens — GitLab AI 代码审查助手
   mergelens feedback <project> <mr-iid>             手动结算某 MR 的采纳反馈（合并时会自动结算）
   mergelens issues list <project> [--search 关键词] [--state opened|closed|all]
   mergelens issues create <project> --title "标题" [--desc "描述"] [--labels a,b]
+  mergelens hook list <project>                     查看项目 webhook 配置（事件勾选情况）
+  mergelens hook install <project> --url http://部署机:3000/webhook [--secret s]
+                                                    自动注册/修复 webhook（MR + Comments 事件）
   mergelens serve [--port 3000]                     前台启动服务（Ctrl+C 退出）
   mergelens start [--port 3000]                     后台常驻启动（脱离终端）
   mergelens stop                                    停止后台服务
@@ -121,6 +124,35 @@ async function main(): Promise<void> {
         console.log(`已创建 #${issue.iid} ${issue.web_url}`);
       } else {
         throw new Error("用法：mergelens issues <list|create> ...");
+      }
+      break;
+    }
+
+    case "hook": {
+      const [sub, project] = rest;
+      if (!project) throw new Error("用法：mergelens hook <list|install> <project> [--url ...]");
+      requireToken(cfg);
+      const gl = new GitLab(cfg);
+      if (sub === "list") {
+        const hooks = await gl.listProjectHooks(project);
+        if (hooks.length === 0) {
+          console.log("该项目没有配置任何 webhook。注册：mergelens hook install " + project + " --url http://部署机:3000/webhook");
+          break;
+        }
+        for (const h of hooks) {
+          console.log(`#${h.id} ${h.url}`);
+          console.log(`   Merge request events: ${h.merge_requests_events ? "✓" : "✗"}   Comments(@ai 需要): ${h.note_events ? "✓" : "✗"}`);
+        }
+      } else if (sub === "install") {
+        const url = arg("--url");
+        if (!url) throw new Error("需要 --url，例如 --url http://部署机:3000/webhook");
+        const secret = arg("--secret") ?? process.env.WEBHOOK_SECRET;
+        const r = await gl.installProjectHook(project, url, secret);
+        console.log(`${r.updated ? "已更新" : "已创建"} webhook #${r.id}：${url}`);
+        console.log(`  已勾选：Merge request events ✓  Comments ✓${secret ? "  Secret ✓" : "  （无 Secret）"}`);
+        console.log(`  下一步：确保 mergelens start 常驻运行，且 GitLab 能访问该 URL（GitLab 服务器上 curl ${url.replace(/\/webhook$/, "/health")}）`);
+      } else {
+        throw new Error("用法：mergelens hook <list|install> <project>");
       }
       break;
     }

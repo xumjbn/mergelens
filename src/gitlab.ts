@@ -142,6 +142,37 @@ export class GitLab {
     );
   }
 
+  /* ---------------- Webhooks ---------------- */
+
+  listProjectHooks(project: string | number): Promise<Array<{
+    id: number; url: string; merge_requests_events: boolean; note_events: boolean; push_events: boolean;
+  }>> {
+    return this.req("GET", `/projects/${this.proj(project)}/hooks`);
+  }
+
+  /** 注册/更新 webhook（同 URL 已存在则更新），勾选 MR + Comments 两类事件。 */
+  async installProjectHook(
+    project: string | number,
+    url: string,
+    secret?: string,
+  ): Promise<{ id: number; updated: boolean }> {
+    const body = {
+      url,
+      merge_requests_events: true,
+      note_events: true,
+      push_events: false,
+      enable_ssl_verification: url.startsWith("https://"),
+      ...(secret ? { token: secret } : {}),
+    };
+    const existing = (await this.listProjectHooks(project)).find((h) => h.url === url);
+    if (existing) {
+      await this.req("PUT", `/projects/${this.proj(project)}/hooks/${existing.id}`, body);
+      return { id: existing.id, updated: true };
+    }
+    const created = await this.req<{ id: number }>("POST", `/projects/${this.proj(project)}/hooks`, body);
+    return { id: created.id, updated: false };
+  }
+
   /** 一段时间内已合并的 MR（发布说明用）。 */
   listMergedMrs(
     project: string | number,

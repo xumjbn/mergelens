@@ -18,7 +18,7 @@ export async function doctor(cfg: Config, project?: string): Promise<boolean> {
   console.log("mergelens doctor\n");
 
   /* ---- 1. 配置 ---- */
-  console.log("[1/4] 配置");
+  console.log("[1/5] 配置");
   console.log(`${OK} GitLab 地址：${cfg.gitlabUrl}`);
   console.log(`${OK} AI：${cfg.ai.provider} / ${cfg.ai.model}` +
     (cfg.ai.fallbackModel ? `（降级 ${cfg.ai.fallbackModel}）` : ""));
@@ -31,7 +31,7 @@ export async function doctor(cfg: Config, project?: string): Promise<boolean> {
   }
 
   /* ---- 2. GitLab ---- */
-  console.log("\n[2/4] GitLab 连通性");
+  console.log("\n[2/5] GitLab 连通性");
   if (!cfg.gitlabToken) {
     fail("GITLAB_TOKEN 未设置", "GitLab → Preferences → Access Tokens，勾选 api scope");
   } else {
@@ -58,7 +58,7 @@ export async function doctor(cfg: Config, project?: string): Promise<boolean> {
   }
 
   /* ---- 3. AI ---- */
-  console.log("\n[3/4] AI 服务");
+  console.log("\n[3/5] AI 服务");
   const keyName =
     cfg.ai.provider === "anthropic" ? "ANTHROPIC_API_KEY"
     : cfg.ai.provider === "openai" ? "OPENAI_API_KEY"
@@ -81,12 +81,44 @@ export async function doctor(cfg: Config, project?: string): Promise<boolean> {
   }
 
   /* ---- 4. skills ---- */
-  console.log("\n[4/4] Skills");
+  console.log("\n[4/5] Skills");
   const skills = loadSkills(cfg.review.skillsDir, cfg.review.enabledSkills);
   if (skills.length === 0) {
     fail(`未加载到任何 skill（目录 ${cfg.review.skillsDir}）`);
   } else {
     console.log(`${OK} 加载 ${skills.length} 个：${skills.map((s) => s.name).join(", ")}`);
+  }
+
+  /* ---- 5. webhook（自动触发与 @ai 的前提）---- */
+  console.log("\n[5/5] Webhook（自动审查与评论区 @ai 依赖它）");
+  if (!project || !cfg.gitlabToken) {
+    console.log(`  - 未指定项目，跳过（用 doctor <project> 检查该项目的 webhook 配置）`);
+  } else {
+    try {
+      const gl = new GitLab(cfg);
+      const hooks = await gl.listProjectHooks(project);
+      if (hooks.length === 0) {
+        fail("该项目没有配置任何 webhook —— 创建 MR 不会自动审查，@ai 不会响应",
+          `一条命令注册：mergelens hook install ${project} --url http://<部署机>:3000/webhook`);
+      } else {
+        for (const h of hooks) {
+          const mrOk = h.merge_requests_events;
+          const noteOk = h.note_events;
+          console.log(`  ${mrOk && noteOk ? "✓" : "✗"} ${h.url}`);
+          console.log(`      Merge request events: ${mrOk ? "✓" : "✗ 未勾选 → 创建 MR 不触发审查"}`);
+          console.log(`      Comments: ${noteOk ? "✓" : "✗ 未勾选 → @ai 不会响应"}`);
+          if (!mrOk || !noteOk) {
+            allOk = false;
+            console.log(`      修复：mergelens hook install ${project} --url ${h.url}（会补全事件勾选）`);
+          }
+        }
+        console.log(`      提示：webhook 通不通还取决于 GitLab 服务器能否访问上述 URL——`);
+        console.log(`      在 GitLab 那台机器上 curl <URL 前缀>/health 验证，并保持 mergelens start 常驻运行`);
+      }
+    } catch (err) {
+      fail(`webhook 配置读取失败：${(err as Error).message}`,
+        "查看项目 webhook 需要 Maintainer 权限的 token");
+    }
   }
 
   console.log("\n" + (allOk

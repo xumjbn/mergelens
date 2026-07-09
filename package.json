@@ -1,6 +1,6 @@
 {
   "name": "mergelens",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "GitLab AI code review assistant — MR review, skills, configurable AI, issue automation",
   "type": "module",
   "bin": {
