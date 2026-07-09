@@ -28,6 +28,28 @@ export class GitLab {
     return encodeURIComponent(String(project));
   }
 
+  /* ---------------- Repository files ---------------- */
+
+  /** 仓库单文件原文（404 时抛错）。 */
+  async getRawFile(project: string | number, path: string, ref: string): Promise<string> {
+    const url = `${this.base}/projects/${this.proj(project)}/repository/files/${encodeURIComponent(path)}/raw?ref=${encodeURIComponent(ref)}`;
+    const res = await fetch(url, { headers: { "PRIVATE-TOKEN": this.token } });
+    if (!res.ok) throw new Error(`GitLab GET ${path} → ${res.status}`);
+    return res.text();
+  }
+
+  /** 仓库目录列表（目录不存在时返回空数组）。 */
+  async listTree(project: string | number, path: string, ref: string): Promise<Array<{ name: string; path: string; type: string }>> {
+    try {
+      return await this.req(
+        "GET",
+        `/projects/${this.proj(project)}/repository/tree?path=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}&per_page=100`,
+      );
+    } catch {
+      return [];
+    }
+  }
+
   /** 验证 token：返回当前认证用户。 */
   getCurrentUser(): Promise<{ username: string; name: string }> {
     return this.req("GET", "/user");

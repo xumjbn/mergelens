@@ -2,7 +2,8 @@ import type { Config, Finding, MrChange, MrInfo, ParsedFile, Severity, Skill } f
 import { GitLab } from "../gitlab.js";
 import { chat, extractJson } from "../ai.js";
 import { addedLineSet, annotate, prepareChanges } from "../diff.js";
-import { loadSkills, skillApplies } from "../skills.js";
+import { loadRepoSkills, loadSkills, mergeSkills, skillApplies } from "../skills.js";
+import { resolveProjectConfig } from "../config.js";
 import { lastReviewedSha, previousFindingTitles, reviewMarker } from "./incremental.js";
 import { recordReview } from "../store.js";
 import { notifyReview } from "../notify.js";
@@ -72,6 +73,11 @@ export async function reviewMr(
   console.error(`[review] 拉取 MR ${project}!${iid} ...`);
   const mr = await gl.getMr(project, iid);
 
+  // 项目级配置：从目标仓库 target 分支拉 .ai-review.yml 叠加到服务端配置
+  const resolved = await resolveProjectConfig(cfg, gl, project, mr.target_branch);
+  cfg = resolved.cfg;
+  console.error(`[review] 配置来源：${resolved.source}`);
+
   // 增量审查：从本 bot 历史评论里找上次审到的 sha，只比对增量
   let changes: MrChange[] | undefined;
   let incremental = false;
@@ -119,7 +125,12 @@ export async function reviewMr(
   }
 
   const changedPaths = files.map((f) => f.path);
-  const skills = loadSkills(cfg.review.skillsDir, cfg.review.enabledSkills)
+  const builtin = loadSkills(cfg.review.skillsDir, "all");
+  const repoSkills = await loadRepoSkills(gl, project, mr.target_branch);
+  if (repoSkills.length > 0) {
+    console.error(`[review] 仓库自定义 skill（.mergelens/skills/）：${repoSkills.map((s) => s.name).join(", ")}`);
+  }
+  const skills = mergeSkills(builtin, repoSkills, cfg.review.enabledSkills)
     .filter((s) => skillApplies(s, changedPaths));
   if (skills.length === 0) throw new Error(`未找到可用 skill（目录 ${cfg.review.skillsDir}）`);
   console.error(`[review] ${files.length} 个文件，${skills.length} 个 skill：${skills.map((s) => s.name).join(", ")}`);

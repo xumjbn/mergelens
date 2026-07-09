@@ -18,6 +18,8 @@ export async function summarizeMr(
   const gl = new GitLab(cfg);
   console.error(`[summarize] 拉取 MR ${project}!${iid} ...`);
   const mr = await gl.getMr(project, iid);
+  const { resolveProjectConfig } = await import("./config.js");
+  cfg = (await resolveProjectConfig(cfg, gl, project, mr.target_branch)).cfg;
   const changes = await gl.getMrChanges(project, iid);
   const { files, skipped } = prepareChanges(changes, cfg.review.ignorePaths, cfg.review.maxDiffLines);
   if (files.length === 0) throw new Error("没有可总结的文本改动");

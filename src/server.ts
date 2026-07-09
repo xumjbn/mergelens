@@ -14,6 +14,13 @@ export function startServer(cfg: Config, port: number): void {
   // serialize reviews per MR so a rapid push burst doesn't double-review
   const running = new Set<string>();
   const queue: Array<{ project: number; iid: number }> = [];
+  // 最近 30 条 webhook 事件及处理决定，暴露在 /health 里方便排查「为什么没触发」
+  const recentEvents: Array<{ ts: string; kind: string; action?: string; project?: string; decision: string }> = [];
+  const track = (e: (typeof recentEvents)[number]): void => {
+    recentEvents.push(e);
+    if (recentEvents.length > 30) recentEvents.shift();
+    console.error(`[webhook] ${e.kind}${e.action ? "/" + e.action : ""} ${e.project ?? ""} → ${e.decision}`);
+  };
 
   async function drain(): Promise<void> {
     const job = queue.shift();
@@ -42,13 +49,16 @@ export function startServer(cfg: Config, port: number): void {
     }
     if (req.method === "GET" && req.url === "/health") {
       res.writeHead(200, { "content-type": "application/json" });
-      return void res.end(JSON.stringify({ ok: true, running: [...running], queued: queue.length }));
+      return void res.end(JSON.stringify({
+        ok: true, running: [...running], queued: queue.length, recentEvents,
+      }, null, 2));
     }
     if (req.method !== "POST" || req.url !== "/webhook") {
       res.writeHead(404);
       return void res.end();
     }
     if (cfg.webhookSecret && req.headers["x-gitlab-token"] !== cfg.webhookSecret) {
+      track({ ts: new Date().toISOString(), kind: "(未知)", decision: "拒绝：Secret token 不匹配（GitLab webhook 设置里的 Secret 与 WEBHOOK_SECRET 环境变量不一致）" });
       res.writeHead(401);
       return void res.end("bad token");
     }
@@ -58,22 +68,33 @@ export function startServer(cfg: Config, port: number): void {
     req.on("end", () => {
       res.writeHead(200);
       res.end("ok"); // respond fast; review runs async
+      const ts = new Date().toISOString();
       try {
         const event = JSON.parse(body);
-        if (event.object_kind !== "merge_request") return;
+        const kind = event.object_kind ?? "(无 object_kind)";
+        const projectPath = event.project?.path_with_namespace ?? String(event.project?.id ?? "?");
+        if (kind !== "merge_request") {
+          track({ ts, kind, project: projectPath, decision: "忽略：只处理 Merge request events（检查 webhook 是否勾选了别的事件）" });
+          return;
+        }
         const attrs = event.object_attributes ?? {};
         const action = attrs.action as string;
-        // open / reopen / update-with-new-commits trigger a review
         const isCodeUpdate = action === "update" && attrs.oldrev;
-        if (action !== "open" && action !== "reopen" && !isCodeUpdate) return;
+        if (action !== "open" && action !== "reopen" && !isCodeUpdate) {
+          track({ ts, kind, action, project: projectPath, decision: `忽略：action=${action} 不触发审查（只响应 open/reopen/push 新提交）` });
+          return;
+        }
         const project = event.project?.id;
         const iid = attrs.iid;
-        if (!project || !iid) return;
-        console.error(`[webhook] ${event.project.path_with_namespace}!${iid} (${action}) 入队`);
+        if (!project || !iid) {
+          track({ ts, kind, action, project: projectPath, decision: "忽略：事件缺少 project.id 或 iid" });
+          return;
+        }
+        track({ ts, kind, action, project: `${projectPath}!${iid}`, decision: "入队审查" });
         queue.push({ project, iid });
         void drain();
       } catch (err) {
-        console.error("[webhook] 解析失败：" + (err as Error).message);
+        track({ ts, kind: "(解析失败)", decision: (err as Error).message });
       }
     });
   });

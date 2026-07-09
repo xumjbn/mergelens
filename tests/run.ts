@@ -127,6 +127,40 @@ t("store：JSONL 写入与读取", () => {
   delete process.env.MERGELENS_DATA;
 });
 
+/* ---- config 两级继承 ---- */
+import { mergeFileConfig } from "../src/config.js";
+
+t("config：仓库配置覆盖服务端默认", () => {
+  const base = loadConfig(); // 默认配置
+  const merged = mergeFileConfig(base, {
+    ai: { model: "deepseek-chat", base_url: "http://evil" },
+    review: { max_comments: 3, severity_gate: "critical" },
+    skills: { enabled: ["security"] },
+    notify: { on: "all" },
+  });
+  assert.equal(merged.ai.model, "deepseek-chat");
+  assert.equal(merged.review.maxComments, 3);
+  assert.equal(merged.review.severityGate, "critical");
+  assert.deepEqual(merged.review.enabledSkills, ["security"]);
+  assert.equal(merged.notify.on, "all");
+  // 未覆盖项继承默认
+  assert.equal(merged.review.maxDiffLines, base.review.maxDiffLines);
+  assert.equal(merged.review.verify, true);
+});
+
+/* ---- skills 合并 ---- */
+import { mergeSkills } from "../src/skills.js";
+
+t("skills：仓库同名覆盖内置 + enabled 过滤", () => {
+  const builtin = [parseSkill("security.md", "内置安全规则"), parseSkill("correctness.md", "内置正确性")];
+  const repo = [parseSkill("security.md", "团队加强版安全规则"), parseSkill("no-fetch.md", "禁止 fetch")];
+  const all = mergeSkills(builtin, repo, "all");
+  assert.equal(all.length, 3);
+  assert.equal(all.find((s) => s.name === "security")!.body, "团队加强版安全规则");
+  const filtered = mergeSkills(builtin, repo, ["no-fetch"]);
+  assert.deepEqual(filtered.map((s) => s.name), ["no-fetch"]);
+});
+
 /* ---- notify ---- */
 import { dingtalkSign, buildMarkdown } from "../src/notify.js";
 

@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import YAML from "yaml";
 import type { Config, Severity } from "./types.js";
+import type { GitLab } from "./gitlab.js";
 
 const DEFAULTS = {
   ai: {
@@ -22,11 +23,45 @@ const DEFAULTS = {
     skillsDir: "skills",
     enabledSkills: "all" as const,
   },
+  notify: { on: "needs-work" as const },
 };
 
+/** 把一份 .ai-review.yml 的内容合并到 base 之上（两级继承的通用实现）。 */
+export function mergeFileConfig(base: Config, fileCfg: any): Config {
+  const ai = fileCfg?.ai ?? {};
+  const r = fileCfg?.review ?? {};
+  return {
+    ...base,
+    ai: {
+      ...base.ai,
+      provider: ai.provider ?? base.ai.provider,
+      model: ai.model ?? base.ai.model,
+      temperature: ai.temperature ?? base.ai.temperature,
+      maxTokens: ai.max_tokens ?? ai.maxTokens ?? base.ai.maxTokens,
+      fallbackModel: ai.fallback ?? base.ai.fallbackModel,
+      lightModel: ai.light_model ?? base.ai.lightModel,
+      baseUrl: ai.base_url ?? base.ai.baseUrl,
+    },
+    review: {
+      ...base.review,
+      maxDiffLines: r.max_diff_lines ?? r.maxDiffLines ?? base.review.maxDiffLines,
+      ignorePaths: r.ignore_paths ?? r.ignorePaths ?? base.review.ignorePaths,
+      maxComments: r.max_comments ?? r.maxComments ?? base.review.maxComments,
+      severityGate: r.severity_gate ?? r.severityGate ?? base.review.severityGate,
+      verify: r.verify ?? base.review.verify,
+      incremental: r.incremental ?? base.review.incremental,
+      minConfidence: r.min_confidence ?? r.minConfidence ?? base.review.minConfidence,
+      language: r.language ?? base.review.language,
+      skillsDir: r.skills_dir ?? r.skillsDir ?? base.review.skillsDir,
+      enabledSkills: fileCfg?.skills?.enabled ?? base.review.enabledSkills,
+    },
+    notify: { on: fileCfg?.notify?.on ?? base.notify.on },
+  };
+}
+
 /**
- * Load config: .ai-review.yml (searched in cwd, or MERGELENS_CONFIG path)
- * merged over defaults; secrets always come from environment variables.
+ * 服务端基础配置：默认值 + 本地 .ai-review.yml（可选）+ 环境变量（密钥只从这里来）。
+ * 多项目部署时它只是兜底，各仓库的 .ai-review.yml 会在审查时叠加（见 resolveProjectConfig）。
  */
 export function loadConfig(configPath?: string): Config {
   const candidates = [
@@ -45,44 +80,47 @@ export function loadConfig(configPath?: string): Config {
   }
 
   const gitlabUrl = process.env.GITLAB_URL ?? fileCfg.gitlab?.url ?? "https://gitlab.com";
-  const gitlabToken = process.env.GITLAB_TOKEN ?? "";
-
-  const cfg: Config = {
+  const base: Config = {
     gitlabUrl: gitlabUrl.replace(/\/+$/, ""),
-    gitlabToken,
+    gitlabToken: process.env.GITLAB_TOKEN ?? "",
     webhookSecret: process.env.WEBHOOK_SECRET,
-    ai: {
-      ...DEFAULTS.ai,
-      ...fileCfg.ai,
-    },
-    review: {
-      ...DEFAULTS.review,
-      ...fileCfg.review,
-      // yaml `ignore_paths` / camelCase both accepted
-      ignorePaths: fileCfg.review?.ignore_paths ?? fileCfg.review?.ignorePaths ?? DEFAULTS.review.ignorePaths,
-      maxDiffLines: fileCfg.review?.max_diff_lines ?? fileCfg.review?.maxDiffLines ?? DEFAULTS.review.maxDiffLines,
-      maxComments: fileCfg.review?.max_comments ?? fileCfg.review?.maxComments ?? DEFAULTS.review.maxComments,
-      severityGate: fileCfg.review?.severity_gate ?? fileCfg.review?.severityGate ?? DEFAULTS.review.severityGate,
-      minConfidence: fileCfg.review?.min_confidence ?? fileCfg.review?.minConfidence ?? DEFAULTS.review.minConfidence,
-      incremental: fileCfg.review?.incremental ?? DEFAULTS.review.incremental,
-      skillsDir: fileCfg.review?.skills_dir ?? fileCfg.review?.skillsDir ?? DEFAULTS.review.skillsDir,
-      enabledSkills: fileCfg.skills?.enabled ?? DEFAULTS.review.enabledSkills,
-    },
-    notify: {
-      on: fileCfg.notify?.on ?? "needs-work",
-    },
+    ai: { ...DEFAULTS.ai },
+    review: { ...DEFAULTS.review },
+    notify: { ...DEFAULTS.notify },
   };
+  return mergeFileConfig(base, fileCfg);
+}
 
-  if (fileCfg.ai?.fallback) cfg.ai.fallbackModel = fileCfg.ai.fallback;
-  if (fileCfg.ai?.light_model) cfg.ai.lightModel = fileCfg.ai.light_model;
-  if (fileCfg.ai?.base_url) cfg.ai.baseUrl = fileCfg.ai.base_url;
-
-  return cfg;
+/**
+ * 项目级配置：从目标仓库的 ref（通常是 MR 的 target 分支，防止 MR 作者在自己分支里
+ * 篡改审查配置）拉取 .ai-review.yml，叠加在服务端配置之上。
+ * 仓库配置不允许覆盖 ai.base_url（防止把带 API key 的请求引到别处）。
+ */
+export async function resolveProjectConfig(
+  base: Config,
+  gl: GitLab,
+  project: string | number,
+  ref: string,
+): Promise<{ cfg: Config; source: string }> {
+  for (const path of [".ai-review.yml", ".ai-review.yaml"]) {
+    try {
+      const raw = await gl.getRawFile(project, path, ref);
+      const fileCfg = YAML.parse(raw) ?? {};
+      if (fileCfg?.ai) {
+        delete fileCfg.ai.base_url;
+        delete fileCfg.ai.baseUrl;
+      }
+      return { cfg: mergeFileConfig(base, fileCfg), source: `${path} @ ${ref}` };
+    } catch {
+      /* 没有该文件，尝试下一个候选 */
+    }
+  }
+  return { cfg: base, source: "服务端默认配置" };
 }
 
 export function requireToken(cfg: Config): void {
   if (!cfg.gitlabToken) {
-    throw new Error("缺少 GITLAB_TOKEN 环境变量（GitLab personal/project access token，需 api 权限）");
+    throw new Error("缺少 GITLAB_TOKEN 环境变量（GitLab personal/group access token，需 api 权限）");
   }
 }
 

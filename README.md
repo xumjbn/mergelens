@@ -76,15 +76,28 @@ make serve                                   # 启动 Webhook 服务（默认 30
 | `serve [--port 3000]` | 启动 Webhook 服务，MR open/push 自动触发审查 |
 | `config` | 打印生效配置（脱敏） |
 
-## 自动触发（Webhook 接入）
+## 自动触发（Webhook 接入，一个服务管所有项目）
 
 1. `npx tsx src/cli.ts serve --port 3000`（生产建议 `npm run build` 后跑 `node dist/cli.js serve`）
-2. GitLab 项目 → Settings → Webhooks：
+2. 配 Webhook——**推荐配在群组级**，组下所有项目一次生效：
+   - GitLab **群组** → Settings → Webhooks（项目级同样支持，路径相同）
    - URL：`http://部署机:3000/webhook`
    - Secret token：与环境变量 `WEBHOOK_SECRET` 一致
-   - 勾选 **Merge request events**
-3. 触发规则：**新开 MR、reopen、向 MR 分支 push 新提交**都会自动审查（push 走增量）；
+   - 勾选 **Merge request events**（只勾这一个就够）
+3. Token 用**群组 Access Token**（群组 → Settings → Access Tokens，Developer 角色 + api scope），
+   一个 token 覆盖组下所有项目，评论显示为独立 bot 身份。
+4. 触发规则：**新开 MR、reopen、向 MR 分支 push 新提交**都会自动审查（push 走增量）；
    同一 MR 连续多次触发会排队串行，同一 sha 重复触发直接跳过。
+
+### 创建 MR 没触发？排查清单
+
+1. **GitLab 能不能够到部署机**——在 GitLab 服务器上 `curl http://部署机:3000/health`。
+   本地开发机通常在 NAT/防火墙后面，GitLab 够不到它；把服务部署到 GitLab 可达的机器上。
+2. GitLab → Settings → Webhooks → 底部 **Recent events**：看有没有投递记录、HTTP 状态码。
+   没记录 = webhook 没配对地方或事件没勾；有记录但非 200 = 网络/Secret 问题。
+3. 打开 `http://部署机:3000/health`：`recentEvents` 里记录了每个收到的事件和处理决定
+   （入队 / 为什么被忽略 / Secret 不匹配），服务日志同步输出。
+4. Secret token 两边必须一字不差；不确定就先两边都留空跑通，再加上。
 
 ## Web 看板
 
@@ -110,9 +123,19 @@ export WECOM_WEBHOOK="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
 推送时机在 `.ai-review.yml` 里控制：`notify.on: all | needs-work | off`（默认 needs-work，
 只在有阻塞级问题时打扰群里）。推送失败只记日志，不影响审查主流程。
 
-## 配置
+## 配置（两级继承，天然多项目）
 
-仓库根目录放 `.ai-review.yml`（模板见 `.ai-review.example.yml`），核心项：
+```
+服务端默认（serve 进程目录的 .ai-review.yml，可选）
+  ↑ 被覆盖
+各仓库自己的 .ai-review.yml（审查时从 MR 的 target 分支实时拉取）
+```
+
+每个仓库把 `.ai-review.yml` 提交到自己的默认分支即可拥有独立配置（模型、门禁、忽略路径、
+启用哪些 skill、推送策略），不用动服务端。安全约束：仓库配置从 **target 分支**读取
+（MR 作者改自己分支里的配置不生效），且不允许覆盖 `ai.base_url`（防 API key 外带）。
+
+核心配置项（模板见 `.ai-review.example.yml`）：
 
 - `ai.provider / model / fallback`：anthropic / openai / deepseek / ollama，主模型失败自动降级
 - `review.verify`：反驳验证——每条发现先由轻量模型尝试推翻，存活的才发布（降误报）
@@ -122,7 +145,13 @@ export WECOM_WEBHOOK="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
 
 ## Skill（审查规则即 markdown）
 
-`skills/*.md`，frontmatter 声明元数据，正文用自然语言写规则：
+两个来源，同名时仓库覆盖内置：
+
+- **内置**：mergelens 自带的 `skills/*.md`（correctness、security）
+- **仓库自定义**：各仓库的 **`.mergelens/skills/*.md`**，审查时从 target 分支实时拉取——
+  团队规范新增一条 = 往自己仓库提交一个 md 文件，不用碰服务端
+
+frontmatter 声明元数据，正文用自然语言写规则：
 
 ```markdown
 ---

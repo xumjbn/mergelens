@@ -2,7 +2,11 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Skill } from "./types.js";
+import type { GitLab } from "./gitlab.js";
 import { matchGlob } from "./diff.js";
+
+/** 各仓库自定义 skill 的约定目录 */
+export const REPO_SKILLS_DIR = ".mergelens/skills";
 
 /**
  * A skill is a markdown file with optional YAML-ish frontmatter:
@@ -54,4 +58,36 @@ export function loadSkills(dir: string, enabled: string[] | "all"): Skill[] {
 export function skillApplies(skill: Skill, changedPaths: string[]): boolean {
   if (skill.triggers.length === 0) return true;
   return changedPaths.some((p) => skill.triggers.some((g) => matchGlob(g, p)));
+}
+
+/** 从目标仓库的 .mergelens/skills/ 拉取自定义 skill（目录不存在返回空）。 */
+export async function loadRepoSkills(
+  gl: GitLab,
+  project: string | number,
+  ref: string,
+): Promise<Skill[]> {
+  const entries = await gl.listTree(project, REPO_SKILLS_DIR, ref);
+  const mds = entries.filter((e) => e.type === "blob" && e.name.endsWith(".md"));
+  const skills: Skill[] = [];
+  for (const e of mds) {
+    try {
+      skills.push(parseSkill(e.name, await gl.getRawFile(project, e.path, ref)));
+    } catch (err) {
+      console.error(`[skills] 加载 ${e.path} 失败：${(err as Error).message}`);
+    }
+  }
+  return skills;
+}
+
+/** 合并内置与仓库 skill：同名时仓库覆盖内置；再按 enabled 白名单过滤。 */
+export function mergeSkills(
+  builtin: Skill[],
+  repo: Skill[],
+  enabled: string[] | "all",
+): Skill[] {
+  const byName = new Map<string, Skill>();
+  for (const s of builtin) byName.set(s.name, s);
+  for (const s of repo) byName.set(s.name, s);
+  const all = [...byName.values()];
+  return enabled === "all" ? all : all.filter((s) => enabled.includes(s.name));
 }
