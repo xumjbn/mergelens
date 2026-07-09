@@ -76,14 +76,39 @@ make serve                                   # 启动 Webhook 服务（默认 30
 | `serve [--port 3000]` | 启动 Webhook 服务，MR open/push 自动触发审查 |
 | `config` | 打印生效配置（脱敏） |
 
-## Webhook 接入
+## 自动触发（Webhook 接入）
 
 1. `npx tsx src/cli.ts serve --port 3000`（生产建议 `npm run build` 后跑 `node dist/cli.js serve`）
 2. GitLab 项目 → Settings → Webhooks：
    - URL：`http://部署机:3000/webhook`
    - Secret token：与环境变量 `WEBHOOK_SECRET` 一致
    - 勾选 **Merge request events**
-3. 新开 MR 或 push 新提交即自动审查。健康检查：`GET /health`
+3. 触发规则：**新开 MR、reopen、向 MR 分支 push 新提交**都会自动审查（push 走增量）；
+   同一 MR 连续多次触发会排队串行，同一 sha 重复触发直接跳过。
+
+## Web 看板
+
+`serve` 起来后浏览器打开 `http://部署机:3000/`：累计审查/发现分布/拦截率指标、
+最近 14 天审查量、最近 20 次审查明细，60s 自动刷新。JSON 数据在 `/api/reviews`。
+
+> 看板读的是 `data/reviews.jsonl`。CLI 和 serve 在不同目录跑时，用 `MERGELENS_DATA`
+> 环境变量指到同一个数据目录。
+
+## IM 推送（钉钉 / 企业微信）
+
+审查完成后自动推送结果卡片（结论、发现分布、MR 链接）。配置环境变量即启用：
+
+```bash
+# 钉钉：群设置 → 智能群助手 → 添加自定义机器人，安全设置建议选「加签」
+export DINGTALK_WEBHOOK="https://oapi.dingtalk.com/robot/send?access_token=xxx"
+export DINGTALK_SECRET="SECxxx"        # 选了加签才需要
+
+# 企业微信：群右键 → 添加群机器人
+export WECOM_WEBHOOK="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
+```
+
+推送时机在 `.ai-review.yml` 里控制：`notify.on: all | needs-work | off`（默认 needs-work，
+只在有阻塞级问题时打扰群里）。推送失败只记日志，不影响审查主流程。
 
 ## 配置
 
@@ -133,4 +158,4 @@ severity_weight: 0.8
 
 - 行内评论只锚定到「新增行」，其他发现进总评表格
 - Webhook 只处理 MR 事件；评论区 @机器人 对话是下一期
-- 无持久化：采纳率统计、审查记忆库等看板能力是下一期
+- 看板是只读的；在线改配置、Skill 在线编辑是下一期

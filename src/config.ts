@@ -68,6 +68,9 @@ export function loadConfig(configPath?: string): Config {
       skillsDir: fileCfg.review?.skills_dir ?? fileCfg.review?.skillsDir ?? DEFAULTS.review.skillsDir,
       enabledSkills: fileCfg.skills?.enabled ?? DEFAULTS.review.enabledSkills,
     },
+    notify: {
+      on: fileCfg.notify?.on ?? "needs-work",
+    },
   };
 
   if (fileCfg.ai?.fallback) cfg.ai.fallbackModel = fileCfg.ai.fallback;

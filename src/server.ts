@@ -2,6 +2,8 @@ import { createServer } from "node:http";
 import type { Config } from "./types.js";
 import { loadConfig, requireAiKey, requireToken } from "./config.js";
 import { reviewMr } from "./review/pipeline.js";
+import { readReviews } from "./store.js";
+import { renderDashboard } from "./web.js";
 
 /**
  * Webhook server.
@@ -30,6 +32,14 @@ export function startServer(cfg: Config, port: number): void {
   }
 
   const server = createServer((req, res) => {
+    if (req.method === "GET" && (req.url === "/" || req.url === "/dashboard")) {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      return void res.end(renderDashboard(readReviews(), cfg));
+    }
+    if (req.method === "GET" && req.url === "/api/reviews") {
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+      return void res.end(JSON.stringify(readReviews()));
+    }
     if (req.method === "GET" && req.url === "/health") {
       res.writeHead(200, { "content-type": "application/json" });
       return void res.end(JSON.stringify({ ok: true, running: [...running], queued: queue.length }));
@@ -69,7 +79,8 @@ export function startServer(cfg: Config, port: number): void {
   });
 
   server.listen(port, () => {
-    console.error(`mergelens webhook 服务已启动：http://0.0.0.0:${port}/webhook（健康检查 /health）`);
+    console.error(`mergelens 服务已启动：http://0.0.0.0:${port}/`);
+    console.error(`  看板 /  ·  Webhook /webhook  ·  健康检查 /health  ·  数据 /api/reviews`);
   });
 }
 

@@ -54,12 +54,18 @@ export interface ReviewConfig {
   enabledSkills: string[] | "all";
 }
 
+export interface NotifyConfig {
+  /** all=每次审查都推 / needs-work=只推有门禁级问题的（默认）/ off */
+  on: "all" | "needs-work" | "off";
+}
+
 export interface Config {
   gitlabUrl: string;
   gitlabToken: string;
   webhookSecret?: string;
   ai: AiConfig;
   review: ReviewConfig;
+  notify: NotifyConfig;
 }
 
 /* ---------------- GitLab API shapes (subset) ---------------- */

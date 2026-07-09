@@ -127,6 +127,48 @@ t("store：JSONL 写入与读取", () => {
   delete process.env.MERGELENS_DATA;
 });
 
+/* ---- notify ---- */
+import { dingtalkSign, buildMarkdown } from "../src/notify.js";
+
+t("钉钉加签：确定性 HMAC", () => {
+  const s1 = dingtalkSign("SECabc", 1720500000000);
+  const s2 = dingtalkSign("SECabc", 1720500000000);
+  assert.equal(s1, s2);
+  assert.ok(s1.length > 20 && !s1.includes("+")); // 已 urlEncode
+  assert.notEqual(s1, dingtalkSign("SECother", 1720500000000));
+});
+
+t("推送消息构造", () => {
+  const { title, text } = buildMarkdown({
+    project: "g/repo",
+    mr: { iid: 42, title: "支付回调", author: { username: "li" }, source_branch: "f", target_branch: "main",
+      description: "", sha: "", diff_refs: { base_sha: "", head_sha: "", start_sha: "" },
+      web_url: "https://gitlab.example.com/g/repo/-/merge_requests/42" },
+    verdict: "needs-work",
+    counts: { critical: 1, serious: 2, suggestion: 0 },
+    incremental: true,
+  });
+  assert.ok(title.includes("g/repo!42"));
+  assert.ok(text.includes("建议修复后合并") && text.includes("🔴 1") && text.includes("增量"));
+  assert.ok(text.includes("merge_requests/42"));
+});
+
+/* ---- web ---- */
+import { renderDashboard } from "../src/web.js";
+import { loadConfig } from "../src/config.js";
+
+t("看板渲染", () => {
+  const html = renderDashboard([{
+    ts: new Date().toISOString(), project: "g/r", iid: 7, title: "标题<script>",
+    verdict: "needs-work", critical: 1, serious: 0, suggestion: 2, filtered: 1,
+    incremental: false, dryRun: false, durationMs: 90000, model: "m",
+  }], loadConfig());
+  assert.ok(html.includes("审查看板"));
+  assert.ok(html.includes("g/r!7"));
+  assert.ok(!html.includes("<script>")); // XSS 转义
+  assert.ok(html.includes("⛔ 建议修复"));
+});
+
 /* ---- json extraction ---- */
 t("extractJson 容错", () => {
   assert.deepEqual(extractJson("前置说明\n```json\n[{\"a\":1}]\n```"), [{ a: 1 }]);

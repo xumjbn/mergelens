@@ -5,6 +5,7 @@ import { addedLineSet, annotate, prepareChanges } from "../diff.js";
 import { loadSkills, skillApplies } from "../skills.js";
 import { lastReviewedSha, previousFindingTitles, reviewMarker } from "./incremental.js";
 import { recordReview } from "../store.js";
+import { notifyReview } from "../notify.js";
 
 const SEV_ORDER: Record<Severity, number> = { critical: 0, serious: 1, suggestion: 2 };
 const SEV_LABEL: Record<Severity, string> = { critical: "🔴 高危", serious: "🟠 严重", suggestion: "🟡 建议" };
@@ -214,6 +215,10 @@ export async function reviewMr(
     incremental, dryRun: !!opts.dryRun,
     durationMs: Date.now() - t0, model: cfg.ai.model,
   });
+
+  if (!opts.dryRun) {
+    await notifyReview(cfg, { project: String(project), mr, verdict, counts, incremental });
+  }
 
   return { mr, findings, filtered, skippedFiles: skipped, verdict, summary, incremental };
 }
