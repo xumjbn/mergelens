@@ -1,4 +1,4 @@
-import type { MemoryRecord } from "./store.js";
+import type { MemoryRecord, SkillOutcome } from "./store.js";
 
 /**
  * 审查记忆库的分析函数：
@@ -40,6 +40,29 @@ export function recurringPatterns(
     .filter((g) => g.count >= minCount)
     .sort((a, b) => b.count - a.count)
     .slice(0, top);
+}
+
+export interface SkillTrust {
+  /** 置信度缩放系数，0.75–1.10；样本不足 5 条时恒为 1 */
+  factor: number;
+  samples: number;
+  adoption: number;
+}
+
+/**
+ * 反馈自动调权：某 skill 的历史发现被采纳（resolve）多 → 系数升；
+ * 采纳率低或净 👎 多 → 系数降。审查时用系数缩放该 skill 发现的置信度，
+ * 低信任 skill 的发现更容易被 min_confidence 门槛过滤，无需人工调配置。
+ */
+export function skillTrust(outcomes: SkillOutcome[], skill: string): SkillTrust {
+  const mine = outcomes.filter((o) => o.skill === skill);
+  const samples = mine.length;
+  if (samples < 5) return { factor: 1, samples, adoption: 0 };
+  const adoption = mine.filter((o) => o.resolved).length / samples;
+  const netDown = mine.reduce((s, o) => s + o.down - o.up, 0);
+  const raw = 0.8 + 0.4 * adoption - 0.03 * Math.max(0, netDown);
+  const factor = Math.min(1.1, Math.max(0.75, raw));
+  return { factor: Math.round(factor * 100) / 100, samples, adoption: Math.round(adoption * 100) / 100 };
 }
 
 export interface RiskyFile {

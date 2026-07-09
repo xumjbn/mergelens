@@ -236,8 +236,17 @@ async function main(): Promise<void> {
     }
 
     case "stats": {
-      const { readReviews, formatStats } = await import("./store.js");
+      const { readReviews, readSkillOutcomes, formatStats } = await import("./store.js");
+      const { skillTrust } = await import("./memory.js");
       console.log(formatStats(readReviews()));
+      const outcomes = readSkillOutcomes();
+      if (outcomes.length > 0) {
+        console.log("\n各 skill 信任度（反馈自动调权，样本 <5 不调整）：");
+        for (const skill of [...new Set(outcomes.map((o) => o.skill))]) {
+          const t = skillTrust(outcomes, skill);
+          console.log(`  ${skill.padEnd(16)} 系数 ${t.factor.toFixed(2)}  样本 ${t.samples}  采纳率 ${Math.round(t.adoption * 100)}%`);
+        }
+      }
       break;
     }
 

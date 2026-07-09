@@ -262,6 +262,30 @@ t("memory：惯犯模式与风险文件", () => {
   assert.equal(risky[0].critical, 3); // critical + 2 条 serious
 });
 
+/* ---- 反馈调权 ---- */
+import { skillTrust } from "../src/memory.js";
+import { parseSkillFromNote } from "../src/feedback.js";
+
+t("调权：样本不足不调整，采纳率驱动系数", () => {
+  const mk = (skill: string, resolved: boolean, down = 0) =>
+    ({ ts: "t", project: "g/r", iid: 1, skill, resolved, up: 0, down });
+  // 4 条样本 → 不调整
+  assert.equal(skillTrust([mk("a", false), mk("a", false), mk("a", false), mk("a", false)], "a").factor, 1);
+  // 6 条全采纳 → 上调（0.8+0.4=1.2 → 封顶 1.1）
+  const good = Array.from({ length: 6 }, () => mk("b", true));
+  assert.equal(skillTrust(good, "b").factor, 1.1);
+  // 6 条全不采纳 + 净 👎 → 下调到下限 0.75
+  const bad = Array.from({ length: 6 }, () => mk("c", false, 1));
+  assert.equal(skillTrust(bad, "c").factor, 0.75);
+  // 其他 skill 不受影响
+  assert.equal(skillTrust(bad, "d").factor, 1);
+});
+
+t("调权：从评论文本反解 skill 名", () => {
+  assert.equal(parseSkillFromNote("🔴 高危 **金额浮点比较**（`correctness` · 置信度 92%）\n\n..."), "correctness");
+  assert.equal(parseSkillFromNote("普通评论没有归因信息"), null);
+});
+
 /* ---- skills 页 ---- */
 import { renderSkillsPage } from "../src/web.js";
 import { listBuiltinFiles, loadSkills } from "../src/skills.js";

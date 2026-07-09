@@ -39,7 +39,8 @@ function adminOk(req: IncomingMessage): boolean {
 export function startServer(cfg: Config, port: number): void {
   // serialize reviews per MR so a rapid push burst doesn't double-review
   const running = new Set<string>();
-  const queue: Array<{ project: number; iid: number }> = [];
+  const queue: Array<{ project: number; iid: number; attempts?: number }> = [];
+  const MAX_ATTEMPTS = 3;
   // 最近 30 条 webhook 事件及处理决定，暴露在 /health 里方便排查「为什么没触发」
   const recentEvents: Array<{ ts: string; kind: string; action?: string; project?: string; decision: string }> = [];
   const track = (e: (typeof recentEvents)[number]): void => {
@@ -62,7 +63,17 @@ export function startServer(cfg: Config, port: number): void {
     try {
       await reviewMr(cfg, job.project, job.iid);
     } catch (err) {
-      console.error(`[webhook] 审查 ${key} 失败：${(err as Error).message}`);
+      const attempts = (job.attempts ?? 0) + 1;
+      if (attempts < MAX_ATTEMPTS) {
+        const delayS = attempts * 60; // 60s / 120s 退避重试
+        console.error(`[webhook] 审查 ${key} 失败（第 ${attempts} 次）：${(err as Error).message}，${delayS}s 后重试`);
+        setTimeout(() => {
+          queue.push({ ...job, attempts });
+          void drain();
+        }, delayS * 1000).unref();
+      } else {
+        console.error(`[webhook] 审查 ${key} 连续 ${MAX_ATTEMPTS} 次失败，放弃：${(err as Error).message}`);
+      }
     } finally {
       running.delete(key);
       void drain();

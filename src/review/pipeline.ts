@@ -5,9 +5,9 @@ import { addedLineSet, annotate, prepareChanges } from "../diff.js";
 import { loadRepoSkills, loadSkills, mergeSkills, skillApplies } from "../skills.js";
 import { resolveProjectConfig } from "../config.js";
 import { lastReviewedSha, previousFindingTitles, reviewMarker } from "./incremental.js";
-import { recordMemory, recordReview, readMemory } from "../store.js";
+import { recordMemory, recordReview, readMemory, readSkillOutcomes } from "../store.js";
 import { notifyReview } from "../notify.js";
-import { recurringPatterns, riskyFiles, type Pattern, type RiskyFile } from "../memory.js";
+import { recurringPatterns, riskyFiles, skillTrust, type Pattern, type RiskyFile } from "../memory.js";
 
 const SEV_ORDER: Record<Severity, number> = { critical: 0, serious: 1, suggestion: 2 };
 const SEV_LABEL: Record<Severity, string> = { critical: "🔴 高危", serious: "🟠 严重", suggestion: "🟡 建议" };
@@ -186,7 +186,19 @@ export async function reviewMr(
   findings = [...seen.values()];
   const beforeFilter = findings.length;
 
-  // 3. confidence floor + rebuttal verification
+  // 3. 反馈调权（按 skill 历史采纳率缩放置信度）→ 置信度门槛 → 反驳验证
+  const outcomes = readSkillOutcomes();
+  const trustLogged = new Set<string>();
+  for (const f of findings) {
+    const t = skillTrust(outcomes, f.skill);
+    if (t.factor !== 1) {
+      f.confidence = Math.round(f.confidence * t.factor);
+      if (!trustLogged.has(f.skill)) {
+        trustLogged.add(f.skill);
+        console.error(`[trust] skill ${f.skill} 信任系数 ${t.factor}（${t.samples} 条历史反馈，采纳率 ${Math.round(t.adoption * 100)}%）`);
+      }
+    }
+  }
   findings = findings.filter((f) => f.confidence >= cfg.review.minConfidence);
   if (cfg.review.verify && findings.length > 0) {
     console.error(`[review] 反驳验证 ${findings.length} 条发现 ...`);

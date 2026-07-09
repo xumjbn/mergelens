@@ -83,6 +83,20 @@ export const readFeedback = (): FeedbackRecord[] => readJsonl<FeedbackRecord>("f
 export const recordMemory = (r: MemoryRecord[]): void => r.forEach((x) => appendJsonl("memory.jsonl", x));
 export const readMemory = (): MemoryRecord[] => readJsonl<MemoryRecord>("memory.jsonl");
 
+/** 按 skill 归因的单条发现结局（自动调权的数据源） */
+export interface SkillOutcome {
+  ts: string;
+  project: string;
+  iid: number;
+  skill: string;
+  resolved: boolean;
+  up: number;
+  down: number;
+}
+
+export const recordSkillOutcomes = (r: SkillOutcome[]): void => r.forEach((x) => appendJsonl("skill-stats.jsonl", x));
+export const readSkillOutcomes = (): SkillOutcome[] => readJsonl<SkillOutcome>("skill-stats.jsonl");
+
 /** stats 命令的汇总输出。 */
 export function formatStats(records: ReviewRecord[]): string {
   if (records.length === 0) {

@@ -175,11 +175,17 @@ diff 上下文回复，在原讨论串里回，不另开评论：
 > 任何人直接打字就能唤起；真实 @bot用户名（个人 token 场景）也始终有效。
 > 前提：webhook 勾选了 **Comments** 事件。
 
-## 采纳率统计
+## 采纳率统计与反馈自动调权
 
 bot 的行内评论都是可 resolve 的讨论。**MR 合并时自动结算**：被 resolve 的发现视为
 「采纳」，同时统计评论上的 👍/👎 表情。结果进 `data/feedback.jsonl`，看板显示总采纳率。
 也可手动结算：`mergelens feedback <project> <mr-iid>`。
+
+**自动调权**：结算时按 skill 归因每条发现的结局（`data/skill-stats.jsonl`）。某 skill
+积累 ≥5 条反馈后计算信任系数（采纳率高 → 最高 1.10；采纳率低或净 👎 多 → 最低 0.75），
+审查时用系数缩放该 skill 发现的置信度——不被开发者认可的 skill，其发现会更容易被
+`min_confidence` 门槛拦下，噪音自动收敛，无需人工调配置。`mergelens stats` 可查看各
+skill 当前系数。
 
 ## 审查记忆库与风险热力
 
@@ -278,6 +284,29 @@ severity_weight: 0.8
 - 同一个 sha 重复触发（webhook 重发、手动重跑）：直接跳过，不花钱
 - 想强制全量重审：`review ... --full`
 - 增量定位失败（如 force push 导致旧 sha 不存在）：自动回退全量审查
+
+## 运维
+
+- **日志轮转**：`data/mergelens.log` 超 5MB 时在下次 `start` 自动归档为 `.log.1`（保留一代）
+- **失败重试**：webhook 触发的审查失败后按 60s/120s 退避自动重试，连续 3 次失败才放弃（日志可查）
+- **HTTPS 反代**（公网/跨网段部署建议）：mergelens 本身只起 HTTP，用 nginx 终结 TLS：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name mergelens.example.com;
+    ssl_certificate     /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_read_timeout 300s;   # 审查耗时可能较长
+    }
+}
+```
+
+  GitLab webhook URL 填 `https://mergelens.example.com/webhook`；配置页/看板同域访问，
+  记得设置 `ADMIN_TOKEN`。
 
 ## 已知边界（MVP）
 

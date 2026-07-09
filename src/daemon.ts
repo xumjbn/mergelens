@@ -1,5 +1,5 @@
 import { spawn, execSync } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { get } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,6 +45,14 @@ export function daemonStart(port: number): void {
     throw new Error(`服务已在运行（pid ${prev.pid}，端口 ${prev.port}）。先 mergelens stop 或直接 mergelens status`);
   }
   mkdirSync(dataDir(), { recursive: true });
+  // 日志轮转：超 5MB 时归档为 .1（保留一代），避免只增不减
+  try {
+    const lf = logFile();
+    if (existsSync(lf) && statSync(lf).size > 5 * 1024 * 1024) {
+      rmSync(lf + ".1", { force: true });
+      renameSync(lf, lf + ".1");
+    }
+  } catch { /* 轮转失败不阻塞启动 */ }
   const out = openSync(logFile(), "a");
   const here = dirname(fileURLToPath(import.meta.url));
   const distServer = join(here, "server.js");           // 已编译（node dist/cli.js start）
