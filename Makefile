@@ -11,7 +11,10 @@ PROXY    ?=                       # 代理环境下传 PROXY=http://host:port
 PORT     ?= 3000
 NPM_FLAGS = --registry=$(REGISTRY) $(if $(PROXY),--proxy=$(PROXY) --https-proxy=$(PROXY))
 
-.PHONY: install typecheck test build review review-post serve config clean
+.PHONY: install typecheck test build doctor review review-post serve config clean
+
+doctor:             ## 自检 GitLab/AI/skills：make doctor [P=<project>]
+	npx tsx src/cli.ts doctor $(P)
 
 install:            ## 安装依赖（默认走 npmmirror 镜像）
 	npm install $(NPM_FLAGS)

@@ -1,10 +1,14 @@
 {
   "name": "mergelens",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "GitLab AI code review assistant — MR review, skills, configurable AI, issue automation",
   "type": "module",
-  "bin": { "mergelens": "./dist/cli.js" },
-  "engines": { "node": ">=18" },
+  "bin": {
+    "mergelens": "./dist/cli.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
@@ -13,6 +17,7 @@
     "test": "tsx tests/run.ts"
   },
   "dependencies": {
+    "undici": "^8.7.0",
     "yaml": "^2.4.5"
   },
   "devDependencies": {

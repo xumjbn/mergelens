@@ -30,7 +30,21 @@ set GITLAB_TOKEN=glpat-xxxx
 set ANTHROPIC_API_KEY=sk-ant-xxxx
 ```
 
-### 3. 审查第一个 MR
+### 3. 自检
+
+```bash
+# 逐项验证 GitLab 连通性、AI key、skill 加载，带具体修复提示
+npx tsx src/cli.ts doctor my-group/my-repo
+```
+
+**代理与内网**：Node 的 fetch 默认忽略 `HTTP_PROXY`/`HTTPS_PROXY`，mergelens 启动时会自动挂载代理支持。典型的「内网 GitLab + 外网 AI API」环境这样配：
+
+```bash
+export HTTPS_PROXY=http://proxy:port      # AI API 走代理出网
+export NO_PROXY=gitlab.internal.com       # 内网 GitLab 绕过代理直连
+```
+
+### 4. 审查第一个 MR
 
 ```bash
 # 先 dry-run：只在终端打印审查结果，不向 GitLab 发布任何评论
@@ -53,7 +67,9 @@ make serve                                   # 启动 Webhook 服务（默认 30
 
 | 命令 | 说明 |
 |---|---|
+| `doctor [project]` | 自检：GitLab 认证、项目权限、AI 连通性、skill 加载，逐项给修复提示 |
 | `review <project> <iid> [--dry-run]` | 审查 MR，发布行内评论和总评；有门禁级问题时退出码 1（可做 CI 卡点） |
+| `summarize <project> <iid> [--update-desc]` | 生成「改了什么/为什么/影响面」摘要，发评论或写入 MR 描述 |
 | `issues list <project> [--search q]` | 检索 Issue |
 | `issues create <project> --title ...` | 创建 Issue |
 | `serve [--port 3000]` | 启动 Webhook 服务，MR open/push 自动触发审查 |

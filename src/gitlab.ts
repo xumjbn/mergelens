@@ -28,6 +28,11 @@ export class GitLab {
     return encodeURIComponent(String(project));
   }
 
+  /** 验证 token：返回当前认证用户。 */
+  getCurrentUser(): Promise<{ username: string; name: string }> {
+    return this.req("GET", "/user");
+  }
+
   /* ---------------- MR ---------------- */
 
   getMr(project: string | number, iid: number): Promise<MrInfo> {
@@ -67,6 +72,10 @@ export class GitLab {
         new_line: newLine,
       },
     });
+  }
+
+  updateMrDescription(project: string | number, iid: number, description: string): Promise<unknown> {
+    return this.req("PUT", `/projects/${this.proj(project)}/merge_requests/${iid}`, { description });
   }
 
   /* ---------------- Issues ---------------- */

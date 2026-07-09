@@ -1,14 +1,19 @@
 #!/usr/bin/env node
 import { loadConfig, requireAiKey, requireToken } from "./config.js";
+import { setupProxyFromEnv } from "./net.js";
 import { reviewMr } from "./review/pipeline.js";
 import { GitLab } from "./gitlab.js";
 import { createIssueFromFinding } from "./issues.js";
 import { startServer } from "./server.js";
+import { doctor } from "./doctor.js";
+import { summarizeMr } from "./summarize.js";
 
 const HELP = `mergelens — GitLab AI 代码审查助手
 
 用法：
+  mergelens doctor [project]                        自检：GitLab 连通性 / AI key / skills
   mergelens review <project> <mr-iid> [--dry-run]   审查一个 MR（project 可以是 id 或 group/name）
+  mergelens summarize <project> <mr-iid> [--dry-run] [--update-desc]   生成 MR 摘要
   mergelens issues list <project> [--search 关键词] [--state opened|closed|all]
   mergelens issues create <project> --title "标题" [--desc "描述"] [--labels a,b]
   mergelens serve [--port 3000]                     启动 Webhook 服务
@@ -33,9 +38,29 @@ function has(flag: string): boolean {
 
 async function main(): Promise<void> {
   const [, , cmd, ...rest] = process.argv;
+  setupProxyFromEnv(); // Node fetch 默认不认 HTTP(S)_PROXY，这里显式挂上
   const cfg = loadConfig();
 
   switch (cmd) {
+    case "doctor": {
+      const ok = await doctor(cfg, rest[0]);
+      process.exitCode = ok ? 0 : 1;
+      break;
+    }
+
+    case "summarize": {
+      const [project, iidStr] = rest;
+      if (!project || !iidStr) throw new Error("用法：mergelens summarize <project> <mr-iid>");
+      requireToken(cfg);
+      requireAiKey(cfg);
+      const summary = await summarizeMr(cfg, project, parseInt(iidStr, 10), {
+        dryRun: has("--dry-run"),
+        updateDescription: has("--update-desc"),
+      });
+      console.log("\n" + summary + "\n");
+      break;
+    }
+
     case "review": {
       const [project, iidStr] = rest;
       if (!project || !iidStr) throw new Error("用法：mergelens review <project> <mr-iid>");

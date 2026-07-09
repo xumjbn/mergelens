@@ -75,6 +75,8 @@ export function startServer(cfg: Config, port: number): void {
 
 // direct entry: `tsx src/server.ts`
 if (process.argv[1] && /server\.(ts|js)$/.test(process.argv[1])) {
+  const { setupProxyFromEnv } = await import("./net.js");
+  setupProxyFromEnv();
   const cfg = loadConfig();
   requireToken(cfg);
   requireAiKey(cfg);
