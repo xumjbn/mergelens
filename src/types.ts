@@ -45,6 +45,8 @@ export interface ReviewConfig {
   severityGate: Severity | "off";
   /** run the rebuttal-verification pass */
   verify: boolean;
+  /** re-review only pushes since the last reviewed sha, skip already-reviewed shas */
+  incremental: boolean;
   /** drop findings below this confidence (0-100) */
   minConfidence: number;
   language: string;

@@ -12,7 +12,8 @@ const HELP = `mergelens — GitLab AI 代码审查助手
 
 用法：
   mergelens doctor [project]                        自检：GitLab 连通性 / AI key / skills
-  mergelens review <project> <mr-iid> [--dry-run]   审查一个 MR（project 可以是 id 或 group/name）
+  mergelens review <project> <mr-iid> [--dry-run] [--full]   审查 MR（默认增量：只审上次之后的新提交）
+  mergelens stats                                   审查记录统计（数据在 data/reviews.jsonl）
   mergelens summarize <project> <mr-iid> [--dry-run] [--update-desc]   生成 MR 摘要
   mergelens issues list <project> [--search 关键词] [--state opened|closed|all]
   mergelens issues create <project> --title "标题" [--desc "描述"] [--labels a,b]
@@ -66,7 +67,10 @@ async function main(): Promise<void> {
       if (!project || !iidStr) throw new Error("用法：mergelens review <project> <mr-iid>");
       requireToken(cfg);
       requireAiKey(cfg);
-      const result = await reviewMr(cfg, project, parseInt(iidStr, 10), { dryRun: has("--dry-run") });
+      const result = await reviewMr(cfg, project, parseInt(iidStr, 10), {
+        dryRun: has("--dry-run"),
+        fullReview: has("--full"),
+      });
       console.log("\n" + result.summary + "\n");
       if (has("--dry-run")) {
         console.log("--- dry-run：以下行内评论未发布 ---");
@@ -109,6 +113,12 @@ async function main(): Promise<void> {
       requireToken(cfg);
       requireAiKey(cfg);
       startServer(cfg, parseInt(arg("--port") ?? "3000", 10));
+      break;
+    }
+
+    case "stats": {
+      const { readReviews, formatStats } = await import("./store.js");
+      console.log(formatStats(readReviews()));
       break;
     }
 

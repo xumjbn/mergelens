@@ -68,7 +68,8 @@ make serve                                   # 启动 Webhook 服务（默认 30
 | 命令 | 说明 |
 |---|---|
 | `doctor [project]` | 自检：GitLab 认证、项目权限、AI 连通性、skill 加载，逐项给修复提示 |
-| `review <project> <iid> [--dry-run]` | 审查 MR，发布行内评论和总评；有门禁级问题时退出码 1（可做 CI 卡点） |
+| `review <project> <iid> [--dry-run] [--full]` | 审查 MR，发布行内评论和总评；有门禁级问题时退出码 1（可做 CI 卡点） |
+| `stats` | 审查记录统计：次数、发现分布、拦截率、最近 10 次（数据在 `data/reviews.jsonl`） |
 | `summarize <project> <iid> [--update-desc]` | 生成「改了什么/为什么/影响面」摘要，发评论或写入 MR 描述 |
 | `issues list <project> [--search q]` | 检索 Issue |
 | `issues create <project> --title ...` | 创建 Issue |
@@ -118,6 +119,15 @@ severity_weight: 0.8
   → 去重 → 置信度门槛 → 反驳验证（质疑者模型尝试推翻）
   → 行内评论（锚定新增行）+ 总评（含风险表格与门禁结论）
 ```
+
+## 增量审查
+
+默认开启（`review.incremental`）。每次审查会在总评里埋一个带 head sha 的隐藏标记：
+
+- push 新提交后再审：只比对 `上次sha..当前head` 的增量 diff，历史发现的标题会喂给模型避免重复唠叨
+- 同一个 sha 重复触发（webhook 重发、手动重跑）：直接跳过，不花钱
+- 想强制全量重审：`review ... --full`
+- 增量定位失败（如 force push 导致旧 sha 不存在）：自动回退全量审查
 
 ## 已知边界（MVP）
 

@@ -1,8 +1,10 @@
-import type { Config, Finding, MrInfo, ParsedFile, Severity, Skill } from "../types.js";
+import type { Config, Finding, MrChange, MrInfo, ParsedFile, Severity, Skill } from "../types.js";
 import { GitLab } from "../gitlab.js";
 import { chat, extractJson } from "../ai.js";
 import { addedLineSet, annotate, prepareChanges } from "../diff.js";
 import { loadSkills, skillApplies } from "../skills.js";
+import { lastReviewedSha, previousFindingTitles, reviewMarker } from "./incremental.js";
+import { recordReview } from "../store.js";
 
 const SEV_ORDER: Record<Severity, number> = { critical: 0, serious: 1, suggestion: 2 };
 const SEV_LABEL: Record<Severity, string> = { critical: "🔴 高危", serious: "🟠 严重", suggestion: "🟡 建议" };
@@ -14,6 +16,10 @@ export interface ReviewResult {
   skippedFiles: string[];
   verdict: "approve" | "needs-work";
   summary: string;
+  /** 本次是否只审了自上次以来的增量 diff */
+  incremental: boolean;
+  /** 该 head sha 已审查过，本次未做任何事 */
+  skipped?: boolean;
 }
 
 /* ---------------- prompts ---------------- */
@@ -33,12 +39,15 @@ ${skill.body}
 [{"file":"路径","line":行号,"severity":"critical|serious|suggestion","title":"一句话问题","detail":"具体说明+为什么是问题","confidence":0到100,"fix":"可选的修复建议代码"}]`;
 }
 
-function reviewUserPrompt(mr: MrInfo, files: ParsedFile[]): string {
+function reviewUserPrompt(mr: MrInfo, files: ParsedFile[], prevTitles: string[]): string {
+  const prev = prevTitles.length > 0
+    ? `\n## 此前审查已指出过的问题（不要重复报告，除非本次改动引入了新的实例）\n${prevTitles.map((t) => `- ${t}`).join("\n")}\n`
+    : "";
   return `## MR 信息
 标题：${mr.title}
 描述：${(mr.description || "（无）").slice(0, 1500)}
 分支：${mr.source_branch} → ${mr.target_branch}
-
+${prev}
 ## Diff（行首数字 = 新文件行号，+ 新增，- 删除）
 
 ${files.map(annotate).join("\n\n")}`;
@@ -54,13 +63,48 @@ export async function reviewMr(
   cfg: Config,
   project: string | number,
   iid: number,
-  opts: { dryRun?: boolean } = {},
+  opts: { dryRun?: boolean; fullReview?: boolean } = {},
 ): Promise<ReviewResult> {
   const gl = new GitLab(cfg);
+  const t0 = Date.now();
 
   console.error(`[review] 拉取 MR ${project}!${iid} ...`);
   const mr = await gl.getMr(project, iid);
-  const changes = await gl.getMrChanges(project, iid);
+
+  // 增量审查：从本 bot 历史评论里找上次审到的 sha，只比对增量
+  let changes: MrChange[] | undefined;
+  let incremental = false;
+  let prevTitles: string[] = [];
+  if (cfg.review.incremental && !opts.fullReview) {
+    try {
+      const me = (await gl.getCurrentUser()).username;
+      const myNotes = (await gl.getMrNotes(project, iid))
+        .filter((n) => n.author?.username === me)
+        .map((n) => n.body);
+      const last = lastReviewedSha(myNotes);
+      prevTitles = previousFindingTitles(myNotes);
+      if (last === mr.sha) {
+        console.error(`[review] head ${mr.sha.slice(0, 8)} 已审查过，跳过`);
+        return {
+          mr, findings: [], filtered: 0, skippedFiles: [], verdict: "approve",
+          summary: `该版本（${mr.sha.slice(0, 8)}）已审查过，无新提交。需要重审请加 --full。`,
+          incremental: true, skipped: true,
+        };
+      }
+      if (last) {
+        const cmp = await gl.compare(project, last, mr.sha);
+        if (cmp.diffs?.length > 0) {
+          changes = cmp.diffs;
+          incremental = true;
+          console.error(`[review] 增量审查：${last.slice(0, 8)}..${mr.sha.slice(0, 8)}，${cmp.diffs.length} 个文件`);
+        }
+      }
+    } catch (err) {
+      console.error(`[review] 增量定位失败（${(err as Error).message}），回退全量审查`);
+    }
+  }
+  changes ??= await gl.getMrChanges(project, iid);
+
   const { files, skipped, truncated } = prepareChanges(
     changes,
     cfg.review.ignorePaths,
@@ -69,7 +113,7 @@ export async function reviewMr(
   if (files.length === 0) {
     return {
       mr, findings: [], filtered: 0, skippedFiles: skipped, verdict: "approve",
-      summary: "没有可审查的文本改动（可能全部命中忽略规则）。",
+      summary: "没有可审查的文本改动（可能全部命中忽略规则）。", incremental,
     };
   }
 
@@ -80,7 +124,7 @@ export async function reviewMr(
   console.error(`[review] ${files.length} 个文件，${skills.length} 个 skill：${skills.map((s) => s.name).join(", ")}`);
 
   // 1. run every applicable skill in parallel
-  const userPrompt = reviewUserPrompt(mr, files);
+  const userPrompt = reviewUserPrompt(mr, files, prevTitles);
   const perSkill = await Promise.all(
     skills.map(async (skill) => {
       try {
@@ -144,7 +188,7 @@ export async function reviewMr(
   const verdict: ReviewResult["verdict"] =
     gate !== "off" && findings.some((f) => SEV_ORDER[f.severity] <= SEV_ORDER[gate])
       ? "needs-work" : "approve";
-  const summary = buildSummary(findings, filtered, skipped, truncated, verdict, cfg);
+  const summary = buildSummary(findings, filtered, skipped, truncated, verdict, cfg, mr, incremental);
 
   // 5. post back to GitLab
   if (!opts.dryRun) {
@@ -161,7 +205,17 @@ export async function reviewMr(
     console.error(`[review] 已发布 ${inline.length} 条行内评论 + 1 条总评`);
   }
 
-  return { mr, findings, filtered, skippedFiles: skipped, verdict, summary };
+  const counts = { critical: 0, serious: 0, suggestion: 0 } as Record<Severity, number>;
+  for (const f of findings) counts[f.severity]++;
+  recordReview({
+    ts: new Date().toISOString(),
+    project: String(project), iid: mr.iid, title: mr.title,
+    verdict, ...counts, filtered,
+    incremental, dryRun: !!opts.dryRun,
+    durationMs: Date.now() - t0, model: cfg.ai.model,
+  });
+
+  return { mr, findings, filtered, skippedFiles: skipped, verdict, summary, incremental };
 }
 
 /* ---------------- formatting ---------------- */
@@ -179,6 +233,7 @@ ${f.detail}${fix}
 function buildSummary(
   findings: Finding[], filtered: number, skipped: string[],
   truncated: boolean, verdict: "approve" | "needs-work", cfg: Config,
+  mr: MrInfo, incremental: boolean,
 ): string {
   const counts = { critical: 0, serious: 0, suggestion: 0 } as Record<Severity, number>;
   for (const f of findings) counts[f.severity]++;
@@ -186,7 +241,8 @@ function buildSummary(
     ? `## 🔍 mergelens 审查结果：⛔ 建议修复后合并`
     : `## 🔍 mergelens 审查结果：✅ 未发现阻塞问题`;
   const lines = [
-    head, "",
+    reviewMarker(mr.sha),
+    head + (incremental ? "（增量：仅新推送的改动）" : ""), "",
     `共 ${findings.length} 条发现：🔴 ${counts.critical} 高危 · 🟠 ${counts.serious} 严重 · 🟡 ${counts.suggestion} 建议` +
       (filtered > 0 ? `（另有 ${filtered} 条低置信度发现已自动过滤）` : ""),
   ];

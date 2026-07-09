@@ -78,6 +78,22 @@ export class GitLab {
     return this.req("PUT", `/projects/${this.proj(project)}/merge_requests/${iid}`, { description });
   }
 
+  /** MR 全部评论（时间正序），用于增量审查定位上次审到的 sha。 */
+  getMrNotes(project: string | number, iid: number): Promise<Array<{ body: string; author: { username: string } }>> {
+    return this.req(
+      "GET",
+      `/projects/${this.proj(project)}/merge_requests/${iid}/notes?per_page=100&order_by=created_at&sort=asc`,
+    );
+  }
+
+  /** 两个 commit 之间的 diff（增量审查用），返回结构与 MR changes 相同。 */
+  compare(project: string | number, from: string, to: string): Promise<{ diffs: MrChange[] }> {
+    return this.req(
+      "GET",
+      `/projects/${this.proj(project)}/repository/compare?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    );
+  }
+
   /* ---------------- Issues ---------------- */
 
   createIssue(

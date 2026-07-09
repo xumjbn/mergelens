@@ -82,6 +82,51 @@ t("parseSkill 无 frontmatter", () => {
   assert.ok(skillApplies(s, ["anything.py"]));
 });
 
+/* ---- incremental ---- */
+import { lastReviewedSha, previousFindingTitles, reviewMarker } from "../src/review/incremental.js";
+
+t("增量：sha 标记提取（取最后一次）", () => {
+  const notes = [
+    "普通人类评论",
+    reviewMarker("aaaa1111aaaa1111") + "\n## 审查结果 ...",
+    "又一条评论",
+    reviewMarker("bbbb2222bbbb2222") + "\n## 审查结果 ...",
+  ];
+  assert.equal(lastReviewedSha(notes), "bbbb2222bbbb2222");
+  assert.equal(lastReviewedSha(["没有标记"]), null);
+});
+
+t("增量：历史发现标题提取", () => {
+  const titles = previousFindingTitles([
+    "🔴 高危 **金额比较使用浮点等值判断**（correctness · 置信度 92%）",
+    "| 🟠 严重 | `a.ts:23` | **SQL 拼接注入风险** | security |",
+  ]);
+  assert.ok(titles.includes("金额比较使用浮点等值判断"));
+  assert.ok(titles.includes("SQL 拼接注入风险"));
+});
+
+/* ---- store ---- */
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as pjoin } from "node:path";
+import { recordReview, readReviews } from "../src/store.js";
+
+t("store：JSONL 写入与读取", () => {
+  process.env.MERGELENS_DATA = mkdtempSync(pjoin(tmpdir(), "mergelens-test-"));
+  const rec = {
+    ts: "2026-07-09T10:00:00.000Z", project: "g/r", iid: 1, title: "t",
+    verdict: "approve" as const, critical: 0, serious: 1, suggestion: 2,
+    filtered: 3, incremental: true, dryRun: false, durationMs: 1200, model: "m",
+  };
+  recordReview(rec);
+  recordReview({ ...rec, iid: 2, verdict: "needs-work" as const });
+  const all = readReviews();
+  assert.equal(all.length, 2);
+  assert.equal(all[1].iid, 2);
+  assert.equal(all[0].serious, 1);
+  delete process.env.MERGELENS_DATA;
+});
+
 /* ---- json extraction ---- */
 t("extractJson 容错", () => {
   assert.deepEqual(extractJson("前置说明\n```json\n[{\"a\":1}]\n```"), [{ a: 1 }]);

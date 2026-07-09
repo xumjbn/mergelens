@@ -17,6 +17,7 @@ review:
   max_comments: 8                     # 每个 MR 最多行内评论数（降噪）
   min_confidence: 70                  # 低于此置信度的发现直接丢弃
   verify: true                        # 反驳验证：先质疑再发布，减少误报
+  incremental: true                   # 增量审查：push 新提交只审新增 diff，已审过的 sha 直接跳过
   severity_gate: serious              # 达到该级别 → 总评判定"建议修复后合并"；off 关闭
   language: 简体中文
   ignore_paths:
