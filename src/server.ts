@@ -1,9 +1,30 @@
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { writeFileSync } from "node:fs";
 import type { Config } from "./types.js";
-import { loadConfig, requireAiKey, requireToken } from "./config.js";
+import { fileConfigToYaml, loadConfig, requireAiKey, requireToken, serverConfigPath } from "./config.js";
+import { GitLab } from "./gitlab.js";
 import { reviewMr } from "./review/pipeline.js";
 import { readReviews } from "./store.js";
-import { renderDashboard } from "./web.js";
+import { renderConfigPage, renderDashboard } from "./web.js";
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((res) => {
+    let b = "";
+    req.on("data", (c) => (b += c));
+    req.on("end", () => res(b));
+  });
+}
+
+function json(res: ServerResponse, code: number, data: unknown): void {
+  res.writeHead(code, { "content-type": "application/json; charset=utf-8" });
+  res.end(JSON.stringify(data));
+}
+
+/** 配置写操作的口令保护：设置了 ADMIN_TOKEN 才校验。 */
+function adminOk(req: IncomingMessage): boolean {
+  const t = process.env.ADMIN_TOKEN;
+  return !t || req.headers["x-admin-token"] === t;
+}
 
 /**
  * Webhook server.
@@ -42,6 +63,44 @@ export function startServer(cfg: Config, port: number): void {
     if (req.method === "GET" && (req.url === "/" || req.url === "/dashboard")) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       return void res.end(renderDashboard(readReviews(), cfg));
+    }
+    if (req.method === "GET" && req.url === "/config") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      return void res.end(renderConfigPage(cfg));
+    }
+    if (req.method === "POST" && req.url === "/api/config") {
+      if (!adminOk(req)) return void json(res, 401, { error: "管理口令错误（ADMIN_TOKEN）" });
+      return void readBody(req).then((body) => {
+        try {
+          const { config } = JSON.parse(body);
+          const path = serverConfigPath();
+          writeFileSync(path, fileConfigToYaml(config), "utf8");
+          cfg = loadConfig(); // 热生效：后续审查用新配置
+          console.error(`[config] 服务端配置已更新：${path}`);
+          json(res, 200, { ok: true, path });
+        } catch (err) {
+          json(res, 400, { error: (err as Error).message });
+        }
+      });
+    }
+    if (req.method === "POST" && req.url === "/api/config/commit") {
+      if (!adminOk(req)) return void json(res, 401, { error: "管理口令错误（ADMIN_TOKEN）" });
+      return void readBody(req).then(async (body) => {
+        try {
+          const { project, config } = JSON.parse(body);
+          const gl = new GitLab(cfg);
+          const info = await gl.getProject(project);
+          await gl.commitFile(
+            project, info.default_branch, ".ai-review.yml",
+            fileConfigToYaml(config),
+            "chore: 更新 mergelens 审查配置（来自配置页）",
+          );
+          console.error(`[config] 已提交配置到 ${info.path_with_namespace}@${info.default_branch}`);
+          json(res, 200, { ok: true, branch: info.default_branch });
+        } catch (err) {
+          json(res, 400, { error: (err as Error).message });
+        }
+      });
     }
     if (req.method === "GET" && req.url === "/api/reviews") {
       res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
@@ -101,7 +160,10 @@ export function startServer(cfg: Config, port: number): void {
 
   server.listen(port, () => {
     console.error(`mergelens 服务已启动：http://0.0.0.0:${port}/`);
-    console.error(`  看板 /  ·  Webhook /webhook  ·  健康检查 /health  ·  数据 /api/reviews`);
+    console.error(`  看板 /  ·  配置页 /config  ·  Webhook /webhook  ·  健康检查 /health  ·  数据 /api/reviews`);
+    if (!process.env.ADMIN_TOKEN) {
+      console.error(`  提示：未设置 ADMIN_TOKEN，配置页的保存操作不需要口令（内网可接受，公网请设置）`);
+    }
   });
 }
 

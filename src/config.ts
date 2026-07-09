@@ -118,6 +118,26 @@ export async function resolveProjectConfig(
   return { cfg: base, source: "服务端默认配置" };
 }
 
+/** 把「文件形态」的配置对象（snake_case，即页面提交的 JSON）序列化为 .ai-review.yml 内容。 */
+export function fileConfigToYaml(fileCfg: any): string {
+  const clean = (o: any): any => {
+    if (o === null || o === undefined) return undefined;
+    if (typeof o !== "object" || Array.isArray(o)) return o;
+    const out: any = {};
+    for (const [k, v] of Object.entries(o)) {
+      const c = clean(v);
+      if (c !== undefined && c !== "") out[k] = c;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  };
+  return "# 由 mergelens 配置页生成\n" + YAML.stringify(clean(fileCfg) ?? {});
+}
+
+/** 服务端配置文件的落盘路径（与 loadConfig 的读取路径对称）。 */
+export function serverConfigPath(): string {
+  return process.env.MERGELENS_CONFIG ?? resolve(process.cwd(), ".ai-review.yml");
+}
+
 export function requireToken(cfg: Config): void {
   if (!cfg.gitlabToken) {
     throw new Error("缺少 GITLAB_TOKEN 环境变量（GitLab personal/group access token，需 api 权限）");

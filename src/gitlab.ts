@@ -28,6 +28,32 @@ export class GitLab {
     return encodeURIComponent(String(project));
   }
 
+  /** 项目信息（拿默认分支用）。 */
+  getProject(project: string | number): Promise<{ default_branch: string; path_with_namespace: string }> {
+    return this.req("GET", `/projects/${this.proj(project)}`);
+  }
+
+  /** 创建/更新仓库单文件（页面「提交配置到仓库」用）。 */
+  async commitFile(
+    project: string | number,
+    branch: string,
+    filePath: string,
+    content: string,
+    message: string,
+  ): Promise<{ id: string }> {
+    let exists = true;
+    try {
+      await this.getRawFile(project, filePath, branch);
+    } catch {
+      exists = false;
+    }
+    return this.req("POST", `/projects/${this.proj(project)}/repository/commits`, {
+      branch,
+      commit_message: message,
+      actions: [{ action: exists ? "update" : "create", file_path: filePath, content }],
+    });
+  }
+
   /* ---------------- Repository files ---------------- */
 
   /** 仓库单文件原文（404 时抛错）。 */

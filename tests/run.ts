@@ -161,6 +161,28 @@ t("skills：仓库同名覆盖内置 + enabled 过滤", () => {
   assert.deepEqual(filtered.map((s) => s.name), ["no-fetch"]);
 });
 
+/* ---- config yaml 导出回读 ---- */
+import { fileConfigToYaml } from "../src/config.js";
+import YAML from "yaml";
+
+t("config：页面 JSON → yaml → 回读一致", () => {
+  const submitted = {
+    ai: { provider: "deepseek", model: "deepseek-chat", light_model: undefined, temperature: 0.2 },
+    review: { max_comments: 5, verify: false, ignore_paths: ["*.lock", "dist/**"] },
+    skills: { enabled: ["security"] },
+    notify: { on: "all" },
+  };
+  const yaml = fileConfigToYaml(submitted);
+  const back = YAML.parse(yaml);
+  assert.equal(back.ai.provider, "deepseek");
+  assert.equal(back.ai.light_model, undefined); // undefined/空值被清理
+  assert.equal(back.review.verify, false);      // false 要保留
+  assert.deepEqual(back.review.ignore_paths, ["*.lock", "dist/**"]);
+  const merged = mergeFileConfig(loadConfig(), back);
+  assert.equal(merged.review.maxComments, 5);
+  assert.equal(merged.notify.on, "all");
+});
+
 /* ---- notify ---- */
 import { dingtalkSign, buildMarkdown } from "../src/notify.js";
 
