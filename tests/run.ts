@@ -229,6 +229,18 @@ t("看板渲染（含采纳率）", () => {
   assert.ok(html.includes("👍2 👎1"));
 });
 
+/* ---- skills 页 ---- */
+import { renderSkillsPage } from "../src/web.js";
+import { loadSkills } from "../src/skills.js";
+
+t("Skill 页渲染（内置列表）", () => {
+  const html = renderSkillsPage(loadSkills("skills", "all"));
+  assert.ok(html.includes("correctness"));
+  assert.ok(html.includes("security"));
+  assert.ok(html.includes("效果回放"));
+  assert.ok(html.includes(".mergelens/skills"));
+});
+
 /* ---- assistant ---- */
 import { stripMention } from "../src/assistant.js";
 

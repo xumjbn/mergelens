@@ -234,6 +234,34 @@ export async function reviewMr(
   return { mr, findings, filtered, skippedFiles: skipped, verdict, summary, incremental };
 }
 
+/**
+ * 效果回放：单个 skill 对某个 MR 试跑，只返回发现，不发布任何评论、不写记录。
+ * Skill 编辑页用它在规则上线前预览产出。
+ */
+export async function testSkillOnMr(
+  cfg: Config,
+  project: string | number,
+  iid: number,
+  skill: Skill,
+): Promise<{ findings: Finding[]; fileCount: number }> {
+  const gl = new GitLab(cfg);
+  const mr = await gl.getMr(project, iid);
+  cfg = (await resolveProjectConfig(cfg, gl, project, mr.target_branch)).cfg;
+  const changes = await gl.getMrChanges(project, iid);
+  const { files } = prepareChanges(changes, cfg.review.ignorePaths, cfg.review.maxDiffLines);
+  if (files.length === 0) return { findings: [], fileCount: 0 };
+  const out = await chat(cfg.ai, reviewSystemPrompt(cfg, skill), reviewUserPrompt(mr, files, []), {
+    model: skill.model,
+  });
+  const arr = extractJson<Omit<Finding, "skill">[]>(out);
+  return {
+    findings: arr
+      .filter((f) => f.file && f.title)
+      .map((f) => ({ ...f, skill: skill.name })),
+    fileCount: files.length,
+  };
+}
+
 /* ---------------- formatting ---------------- */
 
 function formatFinding(f: Finding): string {

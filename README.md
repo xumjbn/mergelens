@@ -225,6 +225,10 @@ export WECOM_WEBHOOK="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
 - **仓库自定义**：各仓库的 **`.mergelens/skills/*.md`**，审查时从 target 分支实时拉取——
   团队规范新增一条 = 往自己仓库提交一个 md 文件，不用碰服务端
 
+**在线编辑**：`serve` 起来后访问 `/skills` —— 内置规则只读展示；仓库自定义规则
+在线加载/编辑/新建，保存即向该仓库提交 md 文件；**效果回放**可以在规则上线前
+拿一个真实 MR 试跑（不发布任何评论），先看看新规则会报什么，避免上线刷屏。
+
 frontmatter 声明元数据，正文用自然语言写规则：
 
 ```markdown

@@ -1,4 +1,4 @@
-import type { Config } from "./types.js";
+import type { Config, Skill } from "./types.js";
 import type { FeedbackRecord, ReviewRecord } from "./store.js";
 
 const esc = (s: string): string =>
@@ -92,7 +92,9 @@ tr:last-child td{border-bottom:none}
 .card h3{font-size:13px;margin:0 0 10px}
 svg{display:block;width:100%;height:auto}
 </style></head><body><div class="wrap">
-<h1>merge<b>lens</b> · 审查看板 <a href="/config" style="font-size:13px;font-weight:400;color:var(--accent);margin-left:10px">⚙ 配置</a></h1>
+<h1>merge<b>lens</b> · 审查看板
+  <a href="/config" style="font-size:13px;font-weight:400;color:var(--accent);margin-left:10px">⚙ 配置</a>
+  <a href="/skills" style="font-size:13px;font-weight:400;color:var(--accent);margin-left:6px">🧩 Skills</a></h1>
 <div class="sub">数据每 60s 自动刷新 · JSON API：<span class="mono">/api/reviews</span> · 健康检查：<span class="mono">/health</span></div>
 
 <div class="tiles">
@@ -295,6 +297,160 @@ async function commitRepo(){
   try { const r = await post('/api/config/commit', { project: p, config: collect() });
         toast('已提交到 ' + p + ' 的 ' + r.branch + ' 分支'); }
   catch(e){ toast('提交失败：' + e.message); }
+}
+</script>
+</div></body></html>`;
+}
+
+/** Skill 管理页：内置只读，仓库自定义在线编辑 + 提交 + 效果回放。 */
+export function renderSkillsPage(builtin: Skill[]): string {
+  const builtinCards = builtin.map((s) => `
+  <details class="skillcard">
+    <summary><span class="mono" style="font-weight:700">${esc(s.name)}</span>
+      <span class="badge ok">内置</span>
+      <span class="hint" style="margin-left:auto">trigger: ${esc(s.triggers.join(", ") || "全部文件")} · weight ${s.severityWeight}</span>
+    </summary>
+    <pre>${esc(s.body)}</pre>
+  </details>`).join("");
+
+  const TEMPLATE = [
+    "---", "name: my-rule", 'trigger: "src/**/*.{ts,tsx}"', "severity_weight: 1.0", "---", "",
+    "# 规则标题", "", "用自然语言描述这条团队审查规则：", "- 什么情况必须报告，严重度如何判定", "- 什么情况属于例外不要报",
+  ].join("\n");
+
+  return `<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>mergelens · Skills</title>
+<style>
+:root{--page:#F4F6F5;--surface:#fff;--ink:#17241F;--ink2:#55655E;--ink3:#8A968F;
+  --line:#E3E8E5;--accent:#0E7A6E;--good:#0B7C3E;--bad:#C13333;--warn:#9A6700;
+  --good-bg:rgba(11,124,62,.1);--bad-bg:rgba(193,51,51,.1)}
+@media(prefers-color-scheme:dark){:root{--page:#0E1412;--surface:#161D1A;--ink:#E7EDEA;
+  --ink2:#A3B0A9;--ink3:#71807A;--line:#26302B;--accent:#3FBFAE;--good:#3FAE6A;--bad:#E06060;--warn:#D9A62E;
+  --good-bg:rgba(63,174,106,.14);--bad-bg:rgba(224,96,96,.13)}}
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--ink);
+  font:14px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:960px;margin:0 auto;padding:28px 20px 80px}
+h1{font-size:18px;margin:0}h1 b{color:var(--accent)}h1 a{color:var(--accent);font-size:13px;font-weight:400;margin-left:10px}
+.sub{color:var(--ink3);font-size:12px;margin:2px 0 22px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-bottom:14px}
+.card h3{font-size:13px;margin:0 0 12px}
+.mono{font-family:Consolas,monospace;font-size:12px}.hint{font-size:11px;color:var(--ink3)}
+input[type=text],textarea{width:100%;padding:7px 10px;border-radius:8px;border:1px solid var(--line);
+  background:var(--surface);color:var(--ink);font:inherit;font-size:13px}
+textarea{font-family:Consolas,monospace;font-size:12px;line-height:1.7}
+button{padding:7px 14px;border-radius:8px;border:1px solid var(--line);background:var(--surface);
+  color:var(--ink);font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.badge{font-size:11px;font-weight:600;padding:1px 8px;border-radius:999px}
+.badge.ok{color:var(--good);background:var(--good-bg)}.badge.bad{color:var(--bad);background:var(--bad-bg)}
+.skillcard{border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin-bottom:8px}
+.skillcard summary{display:flex;gap:10px;align-items:center;cursor:pointer;list-style:none}
+.skillcard pre{background:var(--page);border-radius:8px;padding:12px;overflow-x:auto;font-size:12px;line-height:1.7}
+.repo-item{display:flex;gap:10px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--line);font-size:13px}
+.repo-item:last-child{border-bottom:none}
+.finding{border-left:3px solid var(--warn);padding:8px 12px;margin:8px 0;background:var(--page);border-radius:0 8px 8px 0}
+.finding.critical{border-left-color:var(--bad)}.finding.serious{border-left-color:#B4542E}
+.finding b{font-size:13px}.finding p{margin:4px 0 0;font-size:12.5px;color:var(--ink2)}
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--page);
+  padding:10px 18px;border-radius:9px;font-size:13px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:99}
+#toast.on{opacity:1}
+</style></head><body><div class="wrap">
+<h1>merge<b>lens</b> · Skills <a href="/">← 返回看板</a><a href="/config">⚙ 配置</a></h1>
+<div class="sub">审查规则即 markdown。内置规则只读；仓库自定义规则在线编辑，保存 = 向该仓库提交 .mergelens/skills/*.md</div>
+
+<div class="card"><h3>内置 Skill（随 mergelens 发布，只读）</h3>${builtinCards}</div>
+
+<div class="card"><h3>仓库自定义 Skill</h3>
+  <div class="bar" style="margin-bottom:10px">
+    <input type="text" id="proj" placeholder="group/project" style="max-width:260px">
+    <button onclick="loadRepo()">加载</button>
+    <button onclick="newSkill()">+ 新建</button>
+    <input type="text" id="admin_token" placeholder="管理口令（设置了 ADMIN_TOKEN 才需要）" style="max-width:240px">
+  </div>
+  <div id="repoList" class="hint">输入仓库路径后点「加载」</div>
+</div>
+
+<div class="card" id="editorCard" style="display:none"><h3>编辑：<span class="mono" id="editName"></span></h3>
+  <div class="bar" style="margin-bottom:8px">
+    <input type="text" id="skillFile" placeholder="文件名（如 no-raw-fetch.md）" style="max-width:260px">
+  </div>
+  <textarea id="skillBody" rows="16" spellcheck="false"></textarea>
+  <div class="bar" style="margin-top:10px">
+    <button class="primary" onclick="commitSkill()">提交到仓库</button>
+    <input type="text" id="replayMr" placeholder="MR 号（回放用）" style="max-width:130px">
+    <button onclick="replay()">▶ 效果回放</button>
+    <span class="hint">回放 = 用这条规则试跑指定 MR，只在下方显示结果，不发布任何评论</span>
+  </div>
+  <div id="replayOut"></div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+$('admin_token').value = localStorage.getItem('mergelens_admin') || '';
+function toast(m){ $('toast').textContent = m; $('toast').classList.add('on');
+  clearTimeout(window.__t); window.__t = setTimeout(()=>$('toast').classList.remove('on'), 3200); }
+async function api(url, opts){
+  localStorage.setItem('mergelens_admin', $('admin_token').value);
+  const res = await fetch(url, { ...opts,
+    headers: { 'content-type':'application/json', 'x-admin-token': $('admin_token').value } });
+  const data = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(data.error || res.status);
+  return data;
+}
+async function loadRepo(){
+  const p = $('proj').value.trim();
+  if(!p) return toast('先填仓库路径');
+  try{
+    const d = await api('/api/skills?project=' + encodeURIComponent(p));
+    $('repoList').innerHTML = d.repo.length === 0
+      ? '该仓库还没有自定义 skill（.mergelens/skills/ 为空），点「+ 新建」创建第一条'
+      : d.repo.map(s =>
+          '<div class="repo-item"><span class="mono" style="font-weight:700">' + s.name +
+          '</span><span class="hint">trigger: ' + (s.triggers.join(', ') || '全部文件') +
+          '</span><button style="margin-left:auto" onclick=\\'editSkill(' + JSON.stringify(JSON.stringify(s)) + ')\\'>编辑</button></div>'
+        ).join('');
+    toast('已加载 ' + d.repo.length + ' 条自定义 skill');
+  }catch(e){ toast('加载失败：' + e.message); }
+}
+function editSkill(json){
+  const s = JSON.parse(json);
+  $('editorCard').style.display = '';
+  $('editName').textContent = s.name;
+  $('skillFile').value = s.file || (s.name + '.md');
+  $('skillBody').value = s.raw;
+  $('replayOut').innerHTML = '';
+  $('editorCard').scrollIntoView({behavior:'smooth'});
+}
+function newSkill(){
+  editSkill(JSON.stringify({ name: '（新规则）', file: 'my-rule.md', raw: ${JSON.stringify(TEMPLATE)} }));
+}
+async function commitSkill(){
+  const p = $('proj').value.trim();
+  if(!p) return toast('先在上方填仓库路径');
+  try{
+    const r = await api('/api/skills/commit', { method:'POST', body: JSON.stringify({
+      project: p, file: $('skillFile').value.trim(), content: $('skillBody').value }) });
+    toast('已提交到 ' + p + ' 的 ' + r.branch + ' 分支'); loadRepo();
+  }catch(e){ toast('提交失败：' + e.message); }
+}
+async function replay(){
+  const p = $('proj').value.trim(), mr = $('replayMr').value.trim();
+  if(!p || !mr) return toast('需要仓库路径和 MR 号');
+  $('replayOut').innerHTML = '<p class="hint">回放中（调用一次 AI，约 10-60 秒）……</p>';
+  try{
+    const r = await api('/api/skills/test', { method:'POST', body: JSON.stringify({
+      project: p, iid: Number(mr), file: $('skillFile').value.trim(), content: $('skillBody').value }) });
+    $('replayOut').innerHTML =
+      '<p class="hint">审查了 ' + r.fileCount + ' 个文件，产出 ' + r.findings.length + ' 条发现：</p>' +
+      (r.findings.map(f =>
+        '<div class="finding ' + f.severity + '"><b>[' + f.severity + '] ' + f.title +
+        '</b> <span class="hint">' + f.file + (f.line ? ':' + f.line : '') + ' · 置信度 ' + f.confidence + '%</span>' +
+        '<p>' + f.detail + '</p></div>').join('') || '<p class="hint">没有发现 —— 规则可能太宽松或该 MR 不涉及</p>');
+  }catch(e){ $('replayOut').innerHTML = ''; toast('回放失败：' + e.message); }
 }
 </script>
 </div></body></html>`;

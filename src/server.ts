@@ -3,9 +3,10 @@ import { writeFileSync } from "node:fs";
 import type { Config } from "./types.js";
 import { fileConfigToYaml, loadConfig, requireAiKey, requireToken, serverConfigPath } from "./config.js";
 import { GitLab } from "./gitlab.js";
-import { reviewMr } from "./review/pipeline.js";
+import { reviewMr, testSkillOnMr } from "./review/pipeline.js";
+import { loadSkills, parseSkill, REPO_SKILLS_DIR } from "./skills.js";
 import { readFeedback, readReviews } from "./store.js";
-import { renderConfigPage, renderDashboard } from "./web.js";
+import { renderConfigPage, renderDashboard, renderSkillsPage } from "./web.js";
 import { answerMention, stripMention } from "./assistant.js";
 import { collectFeedback } from "./feedback.js";
 
@@ -48,6 +49,7 @@ export function startServer(cfg: Config, port: number): void {
   let botUser: string | null = null;
   const getBotUser = async (): Promise<string> =>
     (botUser ??= (await new GitLab(cfg).getCurrentUser()).username);
+  const gl2 = (): GitLab => new GitLab(cfg);
 
   async function drain(): Promise<void> {
     const job = queue.shift();
@@ -73,6 +75,61 @@ export function startServer(cfg: Config, port: number): void {
     if (req.method === "GET" && req.url === "/config") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       return void res.end(renderConfigPage(cfg));
+    }
+    if (req.method === "GET" && req.url === "/skills") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      return void res.end(renderSkillsPage(loadSkills(cfg.review.skillsDir, "all")));
+    }
+    if (req.method === "GET" && req.url?.startsWith("/api/skills?")) {
+      const project = new URL(req.url, "http://x").searchParams.get("project") ?? "";
+      return void (async () => {
+        try {
+          const gl = new GitLab(cfg);
+          const info = await gl.getProject(project);
+          const entries = await gl.listTree(project, REPO_SKILLS_DIR, info.default_branch);
+          const repo = [];
+          for (const e of entries.filter((x) => x.type === "blob" && x.name.endsWith(".md"))) {
+            const raw = await gl.getRawFile(project, e.path, info.default_branch);
+            const s = parseSkill(e.name, raw);
+            repo.push({ name: s.name, triggers: s.triggers, file: e.name, raw });
+          }
+          json(res, 200, { repo, branch: info.default_branch });
+        } catch (err) {
+          json(res, 400, { error: (err as Error).message });
+        }
+      })();
+    }
+    if (req.method === "POST" && req.url === "/api/skills/commit") {
+      if (!adminOk(req)) return void json(res, 401, { error: "管理口令错误（ADMIN_TOKEN）" });
+      return void readBody(req).then(async (body) => {
+        try {
+          const { project, file, content } = JSON.parse(body);
+          if (!/^[\w-]+\.md$/.test(file)) throw new Error("文件名只能是 字母数字-下划线.md");
+          const info = await gl2().getProject(project);
+          await gl2().commitFile(
+            project, info.default_branch, `${REPO_SKILLS_DIR}/${file}`, content,
+            `chore: 更新审查规则 ${file}（来自 mergelens Skill 页）`,
+          );
+          console.error(`[skills] 已提交 ${file} 到 ${project}@${info.default_branch}`);
+          json(res, 200, { ok: true, branch: info.default_branch });
+        } catch (err) {
+          json(res, 400, { error: (err as Error).message });
+        }
+      });
+    }
+    if (req.method === "POST" && req.url === "/api/skills/test") {
+      if (!adminOk(req)) return void json(res, 401, { error: "管理口令错误（ADMIN_TOKEN）" });
+      return void readBody(req).then(async (body) => {
+        try {
+          const { project, iid, file, content } = JSON.parse(body);
+          const skill = parseSkill(file ?? "test.md", content);
+          console.error(`[skills] 回放 ${skill.name} @ ${project}!${iid}`);
+          const result = await testSkillOnMr(cfg, project, iid, skill);
+          json(res, 200, result);
+        } catch (err) {
+          json(res, 400, { error: (err as Error).message });
+        }
+      });
     }
     if (req.method === "POST" && req.url === "/api/config") {
       if (!adminOk(req)) return void json(res, 401, { error: "管理口令错误（ADMIN_TOKEN）" });
