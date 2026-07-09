@@ -76,6 +76,33 @@ make serve                                   # 启动 Webhook 服务（默认 30
 | `serve [--port 3000]` | 启动 Webhook 服务，MR open/push 自动触发审查 |
 | `config` | 打印生效配置（脱敏） |
 
+## 三种部署形态（按环境选）
+
+| 形态 | 适用场景 | 需要什么 |
+|---|---|---|
+| **CI 模式**（最简） | GitLab 够不到你的任何机器 / 不想维护服务 | 只要 Runner 能出网调 AI API；零部署 |
+| **常驻服务** | 有一台 GitLab 可达的机器 | webhook + 看板 + @ai 对话 + IM 推送全功能 |
+| **Docker** | 常驻服务的容器化版本 | 同上，环境更干净 |
+
+### CI 模式（不需要服务器、不需要 webhook）
+
+复制 `.gitlab-ci.example.yml` 到目标仓库，在项目 CI/CD Variables 里配
+`MERGELENS_GITLAB_TOKEN` 和 AI key，每个 MR 流水线自动审查：
+
+- `GITLAB_URL` 自动取 `CI_SERVER_URL`，项目和 MR 号自动取 CI 变量，`review` 零参数运行
+- `allow_failure: false` 时审查发现门禁级问题直接把流水线打红，形成硬卡点
+- 局限：没有看板/@ai 对话/IM 推送（这些需要常驻服务）
+
+### Docker 部署
+
+```bash
+docker build --build-arg NPM_REGISTRY=https://registry.npmmirror.com -t mergelens .
+docker run -d --name mergelens -p 3000:3000 \
+  --env-file .env \
+  -v mergelens-data:/app/data \
+  mergelens
+```
+
 ## 后台常驻运行
 
 ```bash

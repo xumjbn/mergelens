@@ -71,8 +71,14 @@ async function main(): Promise<void> {
     }
 
     case "review": {
-      const [project, iidStr] = rest;
-      if (!project || !iidStr) throw new Error("用法：mergelens review <project> <mr-iid>");
+      let [project, iidStr] = rest.filter((a) => !a.startsWith("--"));
+      // GitLab CI 里可零参数运行：从 CI 预置变量取项目和 MR
+      if (!project && process.env.CI_MERGE_REQUEST_IID) {
+        project = process.env.CI_PROJECT_PATH ?? process.env.CI_PROJECT_ID ?? "";
+        iidStr = process.env.CI_MERGE_REQUEST_IID;
+        console.error(`[ci] 检测到 GitLab CI 环境：${project}!${iidStr}`);
+      }
+      if (!project || !iidStr) throw new Error("用法：mergelens review <project> <mr-iid>（GitLab CI 的 MR 流水线里可省略参数）");
       requireToken(cfg);
       requireAiKey(cfg);
       const result = await reviewMr(cfg, project, parseInt(iidStr, 10), {

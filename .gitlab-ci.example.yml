@@ -1,0 +1,28 @@
+# mergelens CI 模式示例 —— 复制到目标仓库的 .gitlab-ci.yml（或合并进已有配置）
+#
+# CI 模式的优势：审查在 GitLab Runner 里跑，不需要部署常驻服务、不需要 webhook、
+# 不需要 GitLab 能在网络上够到任何机器。每个 MR 流水线自动触发。
+#
+# 前置：项目/群组 → Settings → CI/CD → Variables 添加（都勾 Masked）：
+#   MERGELENS_GITLAB_TOKEN   api 权限的 access token（发评论用）
+#   DEEPSEEK_API_KEY         或 ANTHROPIC_API_KEY，按 provider
+
+ai-review:
+  stage: test
+  image: node:20
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  variables:
+    GIT_STRATEGY: none          # 不需要 checkout 业务代码，diff 走 API 拉
+  script:
+    # 从你们的 mergelens 仓库获取（也可以做成公司内 npm 包或预制 docker 镜像）
+    - git clone --depth 1 ${MERGELENS_REPO:-https://github.com/xumjbn/AIassistant.git} /tmp/mergelens
+    - cd /tmp/mergelens
+    - npm ci ${NPM_REGISTRY:+--registry=$NPM_REGISTRY}
+    # GITLAB_URL 自动取 CI_SERVER_URL；project/MR 自动取 CI 变量，零参数
+    - export GITLAB_TOKEN=$MERGELENS_GITLAB_TOKEN
+    - npx tsx src/cli.ts review
+  # 审查发现门禁级问题时退出码为 1：
+  #   allow_failure: true  → 仅提示，不挡合并（建议先用这个观察一段时间）
+  #   allow_failure: false → 硬卡点，审查不过流水线红
+  allow_failure: true

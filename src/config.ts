@@ -81,7 +81,8 @@ export function loadConfig(configPath?: string): Config {
     }
   }
 
-  const gitlabUrl = process.env.GITLAB_URL ?? fileCfg.gitlab?.url ?? "https://gitlab.com";
+  // CI_SERVER_URL 是 GitLab CI 预置变量——CI 模式下不用手动配地址
+  const gitlabUrl = process.env.GITLAB_URL ?? process.env.CI_SERVER_URL ?? fileCfg.gitlab?.url ?? "https://gitlab.com";
   const base: Config = {
     gitlabUrl: gitlabUrl.replace(/\/+$/, ""),
     gitlabToken: process.env.GITLAB_TOKEN ?? "",
