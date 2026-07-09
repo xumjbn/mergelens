@@ -6,9 +6,13 @@ import { resolveProjectConfig } from "./config.js";
 import { reviewMr } from "./review/pipeline.js";
 import { summarizeMr } from "./summarize.js";
 
-/** 去掉 @bot 前缀，留下真正的问题。 */
-export function stripMention(note: string, botUsername: string): string {
-  return note.replaceAll(`@${botUsername}`, "").trim();
+/** 去掉 @bot / 触发词，留下真正的问题。 */
+export function stripMention(note: string, mentions: string[]): string {
+  let out = note;
+  for (const m of mentions) {
+    if (m) out = out.split(m).join("");
+  }
+  return out.trim();
 }
 
 /**

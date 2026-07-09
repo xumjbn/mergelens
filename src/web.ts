@@ -224,6 +224,8 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
       <option value="all"${sel("all", cfg.notify.on)}>all（每次都推）</option>
       <option value="off"${sel("off", cfg.notify.on)}>off（不推）</option>
     </select></div>
+  <div><label>评论区触发词</label><input type="text" id="a_trigger" value="${esc(cfg.assistant.trigger)}">
+    <div class="hint">评论包含它即唤起机器人（如 @ai）；真实 @bot用户名 也始终有效</div></div>
 </div></div>
 
 <div class="card"><h3>密钥与渠道（环境变量，只读）</h3>
@@ -271,6 +273,7 @@ function collect(){
               ignore_paths: $('r_ignore').value.split('\\n').map(s=>s.trim()).filter(Boolean) },
     skills: { enabled: en === 'all' ? 'all' : en.split(',').map(s=>s.trim()).filter(Boolean) },
     notify: { on: v('n_on') },
+    assistant: { trigger: v('a_trigger') || '@ai' },
   };
 }
 async function post(url, body){

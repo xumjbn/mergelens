@@ -232,9 +232,10 @@ t("看板渲染（含采纳率）", () => {
 /* ---- assistant ---- */
 import { stripMention } from "../src/assistant.js";
 
-t("@提及剥离", () => {
-  assert.equal(stripMention("@review-bot 这条是误报吧？", "review-bot"), "这条是误报吧？");
-  assert.equal(stripMention("请 @review-bot 重新审查 @review-bot", "review-bot"), "请  重新审查");
+t("@提及/触发词剥离", () => {
+  assert.equal(stripMention("@review-bot 这条是误报吧？", ["@review-bot", "@ai"]), "这条是误报吧？");
+  assert.equal(stripMention("@ai 重新审查", ["", "@ai"]), "重新审查");
+  assert.equal(stripMention("请 @review-bot 看看 @ai", ["@review-bot", "@ai"]), "请  看看");
 });
 
 /* ---- json extraction ---- */

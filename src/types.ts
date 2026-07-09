@@ -59,6 +59,15 @@ export interface NotifyConfig {
   on: "all" | "needs-work" | "off";
 }
 
+export interface AssistantConfig {
+  /**
+   * 评论区唤起机器人的触发词（默认 "@ai"）。
+   * 真实 @bot用户名 也始终有效；触发词是给项目/群组 token 场景用的——
+   * 那类 bot 用户（project_123_bot_xxx）在评论区 @ 不出来。
+   */
+  trigger: string;
+}
+
 export interface Config {
   gitlabUrl: string;
   gitlabToken: string;
@@ -66,6 +75,7 @@ export interface Config {
   ai: AiConfig;
   review: ReviewConfig;
   notify: NotifyConfig;
+  assistant: AssistantConfig;
 }
 
 /* ---------------- GitLab API shapes (subset) ---------------- */

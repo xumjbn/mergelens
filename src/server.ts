@@ -149,17 +149,26 @@ export function startServer(cfg: Config, port: number): void {
           }
           void (async () => {
             try {
-              const bot = await getBotUser();
+              let bot = "";
+              try {
+                bot = await getBotUser();
+              } catch (err) {
+                console.error("[assistant] 获取 bot 用户名失败（触发词仍可用）：" + (err as Error).message);
+              }
               const author = event.user?.username ?? "";
-              if (author === bot) return; // 自己发的评论，静默跳过
+              if (bot && author === bot) return; // 自己发的评论，静默跳过
               const note = String(attrs.note ?? "");
-              if (!note.includes(`@${bot}`)) {
-                track({ ts, kind, project: `${projectPath}!${mrIid}`, decision: `忽略：评论未 @${bot}` });
+              const trigger = cfg.assistant.trigger;
+              const hit =
+                (bot && note.includes(`@${bot}`)) ||
+                (trigger && note.toLowerCase().includes(trigger.toLowerCase()));
+              if (!hit) {
+                track({ ts, kind, project: `${projectPath}!${mrIid}`, decision: `忽略：评论不含触发词 ${trigger}${bot ? ` 或 @${bot}` : ""}` });
                 return;
               }
               track({ ts, kind, project: `${projectPath}!${mrIid}`, decision: `回复 @${author} 的提问` });
               await answerMention(cfg, event.project.id, mrIid, {
-                question: stripMention(note, bot),
+                question: stripMention(note, [bot ? `@${bot}` : "", trigger]),
                 author,
                 discussionId: attrs.discussion_id ?? undefined,
               });

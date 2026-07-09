@@ -24,6 +24,7 @@ const DEFAULTS = {
     enabledSkills: "all" as const,
   },
   notify: { on: "needs-work" as const },
+  assistant: { trigger: "@ai" },
 };
 
 /** 把一份 .ai-review.yml 的内容合并到 base 之上（两级继承的通用实现）。 */
@@ -56,6 +57,7 @@ export function mergeFileConfig(base: Config, fileCfg: any): Config {
       enabledSkills: fileCfg?.skills?.enabled ?? base.review.enabledSkills,
     },
     notify: { on: fileCfg?.notify?.on ?? base.notify.on },
+    assistant: { trigger: fileCfg?.assistant?.trigger ?? base.assistant.trigger },
   };
 }
 
@@ -87,6 +89,7 @@ export function loadConfig(configPath?: string): Config {
     ai: { ...DEFAULTS.ai },
     review: { ...DEFAULTS.review },
     notify: { ...DEFAULTS.notify },
+    assistant: { ...DEFAULTS.assistant },
   };
   return mergeFileConfig(base, fileCfg);
 }

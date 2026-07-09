@@ -30,6 +30,9 @@ review:
 skills:
   enabled: all                        # 或列表：[correctness, security]
 
+assistant:
+  trigger: "@ai"                      # 评论区唤起机器人的触发词（项目 token 的 bot 用户 @ 不出来，用它）
+
 notify:
   on: needs-work                      # all=每次都推 / needs-work=只推有阻塞问题的 / off
   # 渠道通过环境变量启用（URL 含密钥，不放这里）：
