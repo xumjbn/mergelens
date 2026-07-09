@@ -7,14 +7,30 @@ export interface ChatOptions {
   temperature?: number;
 }
 
-/** 进程级 token 计量：pipeline 在审查前 reset、结束后 snapshot 记账。 */
-export const tokenMeter = {
-  input: 0,
-  output: 0,
-  reset(): void { this.input = 0; this.output = 0; },
-  add(i: number, o: number): void { this.input += i || 0; this.output += o || 0; },
-  total(): number { return this.input + this.output; },
-};
+import { AsyncLocalStorage } from "node:async_hooks";
+
+/**
+ * token 计量：按异步上下文隔离（服务端 3 个 MR 并行审查时互不串账）。
+ * pipeline 用 inTokenScope 包住一次审查，scope 内所有 chat 调用自动累计。
+ */
+const meterAls = new AsyncLocalStorage<{ input: number; output: number }>();
+
+export function inTokenScope<T>(fn: () => Promise<T>): Promise<T> {
+  return meterAls.run({ input: 0, output: 0 }, fn);
+}
+
+export function currentTokens(): { input: number; output: number } {
+  const m = meterAls.getStore();
+  return m ? { input: m.input, output: m.output } : { input: 0, output: 0 };
+}
+
+function countTokens(i?: number, o?: number): void {
+  const m = meterAls.getStore();
+  if (m) {
+    m.input += i || 0;
+    m.output += o || 0;
+  }
+}
 
 const OPENAI_COMPAT_BASE: Record<string, string> = {
   openai: "https://api.openai.com/v1",
@@ -66,7 +82,7 @@ async function callOnce(
     });
     if (!res.ok) throw new Error(`anthropic ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const data: any = await res.json();
-    tokenMeter.add(data.usage?.input_tokens, data.usage?.output_tokens);
+    countTokens(data.usage?.input_tokens, data.usage?.output_tokens);
     return (data.content ?? [])
       .filter((b: any) => b.type === "text")
       .map((b: any) => b.text)
@@ -97,7 +113,7 @@ async function callOnce(
   });
   if (!res.ok) throw new Error(`${ai.provider} ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const data: any = await res.json();
-  tokenMeter.add(data.usage?.prompt_tokens, data.usage?.completion_tokens);
+  countTokens(data.usage?.prompt_tokens, data.usage?.completion_tokens);
   return data.choices?.[0]?.message?.content ?? "";
 }
 

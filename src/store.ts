@@ -110,8 +110,10 @@ export function formatStats(records: ReviewRecord[]): string {
   const needsWork = records.filter((r) => r.verdict === "needs-work").length;
   const avgMs = Math.round(sum((r) => r.durationMs) / records.length);
 
+  const tok = sum((r) => (r.tokensIn ?? 0) + (r.tokensOut ?? 0));
   const lines = [
-    `审查 ${records.length} 次（正式 ${real.length} / dry-run ${records.length - real.length}）`,
+    `审查 ${records.length} 次（正式 ${real.length} / dry-run ${records.length - real.length}）` +
+      (tok > 0 ? ` · Token 消耗 ${(tok / 10000).toFixed(1)} 万` : ""),
     `发现：🔴 ${sum((r) => r.critical)} 高危 · 🟠 ${sum((r) => r.serious)} 严重 · 🟡 ${sum((r) => r.suggestion)} 建议` +
       ` · 自动过滤 ${sum((r) => r.filtered)} 条低置信度`,
     `门禁拦截率：${Math.round((needsWork / records.length) * 100)}%（${needsWork}/${records.length}）· 平均耗时 ${(avgMs / 1000).toFixed(1)}s`,

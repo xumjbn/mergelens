@@ -127,13 +127,15 @@ t("增量：sha 标记提取（取最后一次）", () => {
   assert.equal(lastReviewedSha(["没有标记"]), null);
 });
 
-t("增量：历史发现标题提取", () => {
+t("增量：历史发现标题提取（对话回复的加粗不污染）", () => {
   const titles = previousFindingTitles([
-    "🔴 高危 **金额比较使用浮点等值判断**（correctness · 置信度 92%）",
-    "| 🟠 严重 | `a.ts:23` | **SQL 拼接注入风险** | security |",
+    "🔴 高危 **金额比较使用浮点等值判断**（`correctness` · 置信度 92%）",
+    "🟠 严重 **SQL 拼接注入风险**（`security` · 置信度 88%）",
+    "你说得对，**这条是误报**，抱歉。", // @ai 对话回复，不应混入
   ]);
   assert.ok(titles.includes("金额比较使用浮点等值判断"));
   assert.ok(titles.includes("SQL 拼接注入风险"));
+  assert.ok(!titles.includes("这条是误报"));
 });
 
 /* ---- store ---- */

@@ -18,10 +18,14 @@ export function lastReviewedSha(noteBodies: string[]): string | null {
   return last;
 }
 
-/** 提取历史评论中的发现标题（加粗段），用于提示模型「这些已经说过了」。 */
+/**
+ * 提取历史评论中的发现标题（加粗段），用于提示模型「这些已经说过了」。
+ * 只认「发现格式」的评论（含 置信度 N%）——bot 的对话回复里的加粗不算，避免污染。
+ */
 export function previousFindingTitles(noteBodies: string[]): string[] {
   const titles = new Set<string>();
   for (const body of noteBodies) {
+    if (!/置信度\s*\d+%/.test(body)) continue;
     for (const m of body.matchAll(/\*\*(.{4,120}?)\*\*/g)) {
       titles.add(m[1].trim());
     }
