@@ -142,6 +142,17 @@ export class GitLab {
     );
   }
 
+  /** 一段时间内已合并的 MR（发布说明用）。 */
+  listMergedMrs(
+    project: string | number,
+    opts: { targetBranch?: string; updatedAfter?: string } = {},
+  ): Promise<Array<{ iid: number; title: string; description: string; author: { username: string }; merged_at: string; labels: string[]; web_url: string }>> {
+    const q = new URLSearchParams({ state: "merged", per_page: "100", order_by: "updated_at" });
+    if (opts.targetBranch) q.set("target_branch", opts.targetBranch);
+    if (opts.updatedAfter) q.set("updated_after", opts.updatedAfter);
+    return this.req("GET", `/projects/${this.proj(project)}/merge_requests?${q}`);
+  }
+
   /** MR 全部讨论串（含每条 note 的 resolved 状态），采纳率统计用。 */
   listDiscussions(project: string | number, iid: number): Promise<Array<{
     id: string;

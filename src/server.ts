@@ -5,7 +5,8 @@ import { fileConfigToYaml, loadConfig, requireAiKey, requireToken, serverConfigP
 import { GitLab } from "./gitlab.js";
 import { reviewMr, testSkillOnMr } from "./review/pipeline.js";
 import { loadSkills, parseSkill, REPO_SKILLS_DIR } from "./skills.js";
-import { readFeedback, readReviews } from "./store.js";
+import { readFeedback, readMemory, readReviews } from "./store.js";
+import { riskyFiles } from "./memory.js";
 import { renderConfigPage, renderDashboard, renderSkillsPage } from "./web.js";
 import { answerMention, stripMention } from "./assistant.js";
 import { collectFeedback } from "./feedback.js";
@@ -70,7 +71,12 @@ export function startServer(cfg: Config, port: number): void {
   const server = createServer((req, res) => {
     if (req.method === "GET" && (req.url === "/" || req.url === "/dashboard")) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      return void res.end(renderDashboard(readReviews(), readFeedback(), cfg));
+      const mem = readMemory();
+      const risky = [...new Set(mem.map((m) => m.project))]
+        .flatMap((p) => riskyFiles(mem, p, 2, 8).map((f) => ({ ...f, project: p })))
+        .sort((a, b) => b.critical - a.critical || b.total - a.total)
+        .slice(0, 8);
+      return void res.end(renderDashboard(readReviews(), readFeedback(), cfg, risky));
     }
     if (req.method === "GET" && req.url === "/config") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });

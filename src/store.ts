@@ -61,10 +61,23 @@ function readJsonl<T>(file: string): T[] {
     .filter((r): r is T => r !== null);
 }
 
+/** 审查记忆：每条正式发布的发现都沉淀一条，供惯犯模式识别与风险热力 */
+export interface MemoryRecord {
+  ts: string;
+  project: string;
+  iid: number;
+  file: string;
+  severity: string;
+  title: string;
+  skill: string;
+}
+
 export const recordReview = (r: ReviewRecord): void => appendJsonl("reviews.jsonl", r);
 export const readReviews = (): ReviewRecord[] => readJsonl<ReviewRecord>("reviews.jsonl");
 export const recordFeedback = (r: FeedbackRecord): void => appendJsonl("feedback.jsonl", r);
 export const readFeedback = (): FeedbackRecord[] => readJsonl<FeedbackRecord>("feedback.jsonl");
+export const recordMemory = (r: MemoryRecord[]): void => r.forEach((x) => appendJsonl("memory.jsonl", x));
+export const readMemory = (): MemoryRecord[] => readJsonl<MemoryRecord>("memory.jsonl");
 
 /** stats 命令的汇总输出。 */
 export function formatStats(records: ReviewRecord[]): string {

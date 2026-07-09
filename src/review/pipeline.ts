@@ -5,8 +5,9 @@ import { addedLineSet, annotate, prepareChanges } from "../diff.js";
 import { loadRepoSkills, loadSkills, mergeSkills, skillApplies } from "../skills.js";
 import { resolveProjectConfig } from "../config.js";
 import { lastReviewedSha, previousFindingTitles, reviewMarker } from "./incremental.js";
-import { recordReview } from "../store.js";
+import { recordMemory, recordReview, readMemory } from "../store.js";
 import { notifyReview } from "../notify.js";
+import { recurringPatterns, riskyFiles, type Pattern, type RiskyFile } from "../memory.js";
 
 const SEV_ORDER: Record<Severity, number> = { critical: 0, serious: 1, suggestion: 2 };
 const SEV_LABEL: Record<Severity, string> = { critical: "🔴 高危", serious: "🟠 严重", suggestion: "🟡 建议" };
@@ -41,15 +42,27 @@ ${skill.body}
 [{"file":"路径","line":行号,"severity":"critical|serious|suggestion","title":"一句话问题","detail":"具体说明+为什么是问题","confidence":0到100,"fix":"可选的修复建议代码"}]`;
 }
 
-function reviewUserPrompt(mr: MrInfo, files: ParsedFile[], prevTitles: string[]): string {
+function reviewUserPrompt(
+  mr: MrInfo,
+  files: ParsedFile[],
+  prevTitles: string[],
+  patterns: Pattern[] = [],
+  risky: RiskyFile[] = [],
+): string {
   const prev = prevTitles.length > 0
     ? `\n## 此前审查已指出过的问题（不要重复报告，除非本次改动引入了新的实例）\n${prevTitles.map((t) => `- ${t}`).join("\n")}\n`
+    : "";
+  const mem = patterns.length > 0
+    ? `\n## 本团队历史审查中反复出现的问题模式（惯犯——遇到同类问题请提高一级严重度，并注明"该问题模式团队已出现 N 次"）\n${patterns.map((p) => `- ${p.title}（已出现 ${p.count} 次）`).join("\n")}\n`
+    : "";
+  const heat = risky.length > 0
+    ? `\n## 高风险文件（历史审查中问题聚集，请对这些文件的改动从严审查）\n${risky.map((f) => `- ${f.file}（历史发现 ${f.total} 条，其中高危/严重 ${f.critical} 条）`).join("\n")}\n`
     : "";
   return `## MR 信息
 标题：${mr.title}
 描述：${(mr.description || "（无）").slice(0, 1500)}
 分支：${mr.source_branch} → ${mr.target_branch}
-${prev}
+${prev}${mem}${heat}
 ## Diff（行首数字 = 新文件行号，+ 新增，- 删除）
 
 ${files.map(annotate).join("\n\n")}`;
@@ -135,8 +148,13 @@ export async function reviewMr(
   if (skills.length === 0) throw new Error(`未找到可用 skill（目录 ${cfg.review.skillsDir}）`);
   console.error(`[review] ${files.length} 个文件，${skills.length} 个 skill：${skills.map((s) => s.name).join(", ")}`);
 
-  // 1. run every applicable skill in parallel
-  const userPrompt = reviewUserPrompt(mr, files, prevTitles);
+  // 1. run every applicable skill in parallel（注入记忆库的惯犯模式与风险热力）
+  const mem = readMemory();
+  const patterns = recurringPatterns(mem, String(project));
+  const risky = riskyFiles(mem, String(project)).filter((f) => changedPaths.includes(f.file));
+  if (patterns.length > 0) console.error(`[review] 记忆库：${patterns.length} 个惯犯模式注入提示词`);
+  if (risky.length > 0) console.error(`[review] 热力：本次涉及 ${risky.length} 个高风险文件（${risky.map((f) => f.file).join(", ")}）`);
+  const userPrompt = reviewUserPrompt(mr, files, prevTitles, patterns, risky);
   const perSkill = await Promise.all(
     skills.map(async (skill) => {
       try {
@@ -228,6 +246,12 @@ export async function reviewMr(
   });
 
   if (!opts.dryRun) {
+    // 沉淀到记忆库（只记正式发布的发现，dry-run 不算）
+    recordMemory(findings.map((f) => ({
+      ts: new Date().toISOString(),
+      project: String(project), iid: mr.iid,
+      file: f.file, severity: f.severity, title: f.title, skill: f.skill,
+    })));
     await notifyReview(cfg, { project: String(project), mr, verdict, counts, incremental });
   }
 

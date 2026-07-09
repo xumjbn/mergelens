@@ -14,6 +14,8 @@ const HELP = `mergelens — GitLab AI 代码审查助手
   mergelens doctor [project]                        自检：GitLab 连通性 / AI key / skills
   mergelens review <project> <mr-iid> [--dry-run] [--full]   审查 MR（默认增量：只审上次之后的新提交）
   mergelens stats                                   审查记录统计（数据在 data/reviews.jsonl）
+  mergelens changelog <project> [--days 14] [--target 分支]   从已合并 MR 生成发布说明
+  mergelens heatmap <project>                       风险热力：高危文件 + 惯犯问题模式
   mergelens summarize <project> <mr-iid> [--dry-run] [--update-desc]   生成 MR 摘要
   mergelens feedback <project> <mr-iid>             手动结算某 MR 的采纳反馈（合并时会自动结算）
   mergelens issues list <project> [--search 关键词] [--state opened|closed|all]
@@ -165,6 +167,39 @@ async function main(): Promise<void> {
       console.log(rec
         ? `发现 ${rec.findings} 条，采纳（resolved）${rec.resolved}，👍${rec.up} 👎${rec.down}`
         : "该 MR 上没有 bot 发起的行内讨论");
+      break;
+    }
+
+    case "changelog": {
+      const [project] = rest.filter((a) => !a.startsWith("--"));
+      if (!project) throw new Error("用法：mergelens changelog <project> [--days 14] [--target main]");
+      requireToken(cfg);
+      requireAiKey(cfg);
+      const { generateChangelog } = await import("./changelog.js");
+      console.log(await generateChangelog(cfg, project, {
+        days: parseInt(arg("--days") ?? "14", 10),
+        targetBranch: arg("--target"),
+      }));
+      break;
+    }
+
+    case "heatmap": {
+      const [project] = rest;
+      if (!project) throw new Error("用法：mergelens heatmap <project>");
+      const { readMemory } = await import("./store.js");
+      const { recurringPatterns, riskyFiles } = await import("./memory.js");
+      const mem = readMemory();
+      const risky = riskyFiles(mem, project, 1, 15);
+      const patterns = recurringPatterns(mem, project, 2, 10);
+      if (mem.filter((m) => m.project === project).length === 0) {
+        console.log("该项目还没有审查记忆（跑几次正式审查后再来看）");
+        break;
+      }
+      console.log("高风险文件（历史发现聚集）：");
+      for (const f of risky) console.log(`  ${String(f.total).padStart(3)} 条（高危/严重 ${f.critical}）  ${f.file}`);
+      console.log("\n惯犯问题模式（出现 ≥2 次，审查时自动提级）：");
+      if (patterns.length === 0) console.log("  暂无");
+      for (const p of patterns) console.log(`  ${String(p.count).padStart(3)} 次  ${p.title}`);
       break;
     }
 

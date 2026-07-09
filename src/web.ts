@@ -4,8 +4,13 @@ import type { FeedbackRecord, ReviewRecord } from "./store.js";
 const esc = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-/** 服务端渲染的看板首页：指标、14 天趋势、最近审查列表。 */
-export function renderDashboard(records: ReviewRecord[], feedback: FeedbackRecord[], cfg: Config): string {
+/** 服务端渲染的看板首页：指标、14 天趋势、高风险文件、最近审查列表。 */
+export function renderDashboard(
+  records: ReviewRecord[],
+  feedback: FeedbackRecord[],
+  cfg: Config,
+  risky: Array<{ file: string; total: number; critical: number; project?: string }> = [],
+): string {
   const fSum = (f: (r: FeedbackRecord) => number) => feedback.reduce((s, r) => s + f(r), 0);
   const fbFindings = fSum((r) => r.findings);
   const fbResolved = fSum((r) => r.resolved);
@@ -117,6 +122,10 @@ svg{display:block;width:100%;height:auto}
   <div class="card"><h3>最近 14 天审查量</h3>
     <svg viewBox="0 0 616 132" role="img" aria-label="最近14天每日审查量柱状图">${bars}</svg>
   </div>
+  ${risky.length > 0 ? `<div class="card"><h3>高风险文件（历史发现聚集，审查时自动从严）</h3>
+    <table><thead><tr><th>文件</th><th>项目</th><th>历史发现</th><th>高危/严重</th></tr></thead><tbody>
+    ${risky.slice(0, 8).map((f) => `<tr><td class="mono">${esc(f.file)}</td><td class="mono dim">${esc(f.project ?? "")}</td><td class="mono">${f.total}</td><td class="mono" style="color:${f.critical > 0 ? "var(--bad)" : "inherit"}">${f.critical}</td></tr>`).join("")}
+    </tbody></table></div>` : ""}
   <div class="card" style="padding:6px 0 0">
     <h3 style="padding:10px 18px 0">最近审查</h3>
     <div style="overflow-x:auto"><table>

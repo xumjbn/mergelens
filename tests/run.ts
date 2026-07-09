@@ -229,6 +229,33 @@ t("看板渲染（含采纳率）", () => {
   assert.ok(html.includes("👍2 👎1"));
 });
 
+/* ---- memory 记忆库 ---- */
+import { normalizeTitle, recurringPatterns, riskyFiles } from "../src/memory.js";
+
+t("memory：标题归一化聚类", () => {
+  assert.equal(normalizeTitle("SQL 拼接存在注入风险 (第23行)"), normalizeTitle("SQL 拼接存在注入风险（第 8 行）"));
+  assert.notEqual(normalizeTitle("空指针解引用"), normalizeTitle("SQL 注入"));
+});
+
+t("memory：惯犯模式与风险文件", () => {
+  const mk = (title: string, file: string, severity = "serious") =>
+    ({ ts: "t", project: "g/r", iid: 1, file, severity, title, skill: "s" });
+  const mem = [
+    mk("金额浮点比较 (第23行)", "a.ts"), mk("金额浮点比较（第8行）", "a.ts"),
+    mk("SQL 注入", "a.ts", "critical"), mk("缺少测试", "b.ts", "suggestion"),
+    mk("其他项目的", "c.ts"),
+  ];
+  mem[4].project = "other/repo";
+  const patterns = recurringPatterns(mem, "g/r");
+  assert.equal(patterns.length, 1); // 只有"金额浮点比较"出现两次（归一化后同键）
+  assert.equal(patterns[0].count, 2);
+  const risky = riskyFiles(mem, "g/r", 2);
+  assert.equal(risky.length, 1);
+  assert.equal(risky[0].file, "a.ts");
+  assert.equal(risky[0].total, 3);
+  assert.equal(risky[0].critical, 3); // critical + 2 条 serious
+});
+
 /* ---- skills 页 ---- */
 import { renderSkillsPage } from "../src/web.js";
 import { loadSkills } from "../src/skills.js";
