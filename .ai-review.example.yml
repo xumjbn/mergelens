@@ -1,0 +1,30 @@
+# mergelens 配置示例 —— 复制为仓库根目录的 .ai-review.yml
+# 密钥一律走环境变量，不要写进这个文件
+
+gitlab:
+  url: https://gitlab.example.com     # 也可用 GITLAB_URL 环境变量覆盖
+
+ai:
+  provider: anthropic                 # anthropic / openai / deepseek / ollama
+  model: claude-sonnet-5
+  fallback: claude-haiku-4-5          # 主模型失败时自动降级
+  light_model: claude-haiku-4-5       # 反驳验证、判重等轻量任务
+  temperature: 0.2
+  # base_url: http://localhost:11434/v1   # ollama 或自建网关时使用
+
+review:
+  max_diff_lines: 3000                # 超出后按文件大小优先，其余跳过
+  max_comments: 8                     # 每个 MR 最多行内评论数（降噪）
+  min_confidence: 70                  # 低于此置信度的发现直接丢弃
+  verify: true                        # 反驳验证：先质疑再发布，减少误报
+  severity_gate: serious              # 达到该级别 → 总评判定"建议修复后合并"；off 关闭
+  language: 简体中文
+  ignore_paths:
+    - "*.lock"
+    - "package-lock.json"
+    - "dist/**"
+    - "*.min.js"
+    - "vendor/**"
+
+skills:
+  enabled: all                        # 或列表：[correctness, security]
