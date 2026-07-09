@@ -76,9 +76,24 @@ make serve                                   # 启动 Webhook 服务（默认 30
 | `serve [--port 3000]` | 启动 Webhook 服务，MR open/push 自动触发审查 |
 | `config` | 打印生效配置（脱敏） |
 
+## 后台常驻运行
+
+```bash
+npm run build                          # 先编译（后台进程直接跑 dist，更稳）
+npx tsx src/cli.ts start --port 3000   # 后台启动，脱离终端，关掉窗口不影响
+npx tsx src/cli.ts status              # 运行状态 + 健康检查（队列/近期事件）
+npx tsx src/cli.ts logs --lines 200    # 查看日志（data/mergelens.log）
+npx tsx src/cli.ts stop                # 停止
+```
+
+开机自启/崩溃自动拉起建议再套一层系统级守护：
+
+- **Linux**：systemd unit，`ExecStart=/usr/bin/node /opt/mergelens/dist/cli.js serve`，`Restart=always`
+- **Windows**：任务计划程序（触发器=系统启动）或 [NSSM](https://nssm.cc) 注册为系统服务
+
 ## 自动触发（Webhook 接入，一个服务管所有项目）
 
-1. `npx tsx src/cli.ts serve --port 3000`（生产建议 `npm run build` 后跑 `node dist/cli.js serve`）
+1. 启动服务：上面的 `start`（后台）或 `serve`（前台调试）
 2. 配 Webhook——**推荐配在群组级**，组下所有项目一次生效：
    - GitLab **群组** → Settings → Webhooks（项目级同样支持，路径相同）
    - URL：`http://部署机:3000/webhook`

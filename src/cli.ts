@@ -17,7 +17,11 @@ const HELP = `mergelens — GitLab AI 代码审查助手
   mergelens summarize <project> <mr-iid> [--dry-run] [--update-desc]   生成 MR 摘要
   mergelens issues list <project> [--search 关键词] [--state opened|closed|all]
   mergelens issues create <project> --title "标题" [--desc "描述"] [--labels a,b]
-  mergelens serve [--port 3000]                     启动 Webhook 服务
+  mergelens serve [--port 3000]                     前台启动服务（Ctrl+C 退出）
+  mergelens start [--port 3000]                     后台常驻启动（脱离终端）
+  mergelens stop                                    停止后台服务
+  mergelens status                                  后台服务状态 + 健康检查
+  mergelens logs [--lines 100]                      查看后台服务日志
   mergelens config                                  打印生效配置（脱敏）
 
 环境变量：
@@ -113,6 +117,32 @@ async function main(): Promise<void> {
       requireToken(cfg);
       requireAiKey(cfg);
       startServer(cfg, parseInt(arg("--port") ?? "3000", 10));
+      break;
+    }
+
+    case "start": {
+      requireToken(cfg);
+      requireAiKey(cfg);
+      const { daemonStart } = await import("./daemon.js");
+      daemonStart(parseInt(arg("--port") ?? "3000", 10));
+      break;
+    }
+
+    case "stop": {
+      const { daemonStop } = await import("./daemon.js");
+      daemonStop();
+      break;
+    }
+
+    case "status": {
+      const { daemonStatus } = await import("./daemon.js");
+      process.exitCode = (await daemonStatus()) ? 0 : 1;
+      break;
+    }
+
+    case "logs": {
+      const { daemonLogs } = await import("./daemon.js");
+      daemonLogs(parseInt(arg("--lines") ?? "100", 10));
       break;
     }
 
