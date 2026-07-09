@@ -18,6 +18,10 @@ review:
   min_confidence: 70                  # 低于此置信度的发现直接丢弃
   verify: true                        # 反驳验证：先质疑再发布，减少误报
   incremental: true                   # 增量审查：push 新提交只审新增 diff，已审过的 sha 直接跳过
+  auto_summary_lines: 400             # 全量审查 diff 超过该行数自动生成 MR 摘要（0=关）
+  vote: off                           # approve：审查通过自动点 approve、不通过撤销
+  daily_token_budget: 0               # 每日 token 预算（输入+输出，0=不限），超出后跳过审查
+  redact_patterns: []                 # 发给 LLM 前脱敏的正则，如 ["10\\.\\d+\\.\\d+\\.\\d+", "internal\\.corp\\.com"]
   severity_gate: serious              # 达到该级别 → 总评判定"建议修复后合并"；off 关闭
   language: 简体中文
   ignore_paths:

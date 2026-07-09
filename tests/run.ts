@@ -64,6 +64,37 @@ t("prepareChanges 忽略与预算", () => {
   assert.deepEqual(skipped, ["yarn.lock"]);
 });
 
+/* ---- 分片与脱敏 ---- */
+import { chunkFiles, redact } from "../src/diff.js";
+
+t("chunkFiles：装箱、截断与溢出", () => {
+  const mkFile = (path: string, n: number) => ({
+    path, addedCount: n, deletedCount: 0,
+    lines: Array.from({ length: n }, (_, i) => ({ type: "add" as const, oldLine: null, newLine: i + 1, text: "x" })),
+  });
+  // 3 个小文件装进 1 块
+  const a = chunkFiles([mkFile("a", 30), mkFile("b", 30), mkFile("c", 30)], 100);
+  assert.equal(a.chunks.length, 1);
+  assert.equal(a.skipped.length, 0);
+  // 大文件截断独占一块
+  const b = chunkFiles([mkFile("big", 500)], 100);
+  assert.equal(b.chunks.length, 1);
+  assert.equal(b.chunks[0][0].lines.length, 100);
+  // 超过 maxChunks 的文件进 skipped
+  const many = Array.from({ length: 10 }, (_, i) => mkFile("f" + i, 90));
+  const c = chunkFiles(many, 100, 4);
+  assert.equal(c.chunks.length, 4);
+  assert.equal(c.skipped.length, 6);
+});
+
+t("redact：正则脱敏与非法正则容错", () => {
+  const out = redact("连接 10.1.2.3 和 api.internal.corp.com 失败",
+    ["10\\.\\d+\\.\\d+\\.\\d+", "[\\w.]*internal\\.corp\\.com", "((非法正则"]);
+  assert.ok(!out.includes("10.1.2.3"));
+  assert.ok(!out.includes("internal.corp.com"));
+  assert.ok(out.includes("[已脱敏]"));
+});
+
 /* ---- skills ---- */
 t("parseSkill frontmatter", () => {
   const s = parseSkill("x.md", `---\nname: sec\ntrigger: "*.sql, **/dao/**"\nseverity_weight: 1.4\n---\n\n规则正文`);

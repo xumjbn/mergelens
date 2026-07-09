@@ -86,6 +86,47 @@ export function addedLineSet(file: ParsedFile): Set<number> {
   return s;
 }
 
+/** 发给 LLM 前脱敏：命中配置的正则统一替换，防内网信息外带。 */
+export function redact(text: string, patterns: string[]): string {
+  let out = text;
+  for (const p of patterns) {
+    try {
+      out = out.replace(new RegExp(p, "g"), "[已脱敏]");
+    } catch {
+      /* 非法正则跳过 */
+    }
+  }
+  return out;
+}
+
+/**
+ * 大 MR 分片：把文件贪心装箱到若干块（每块 ≤ maxLines），并行审查后汇总。
+ * 单文件超 maxLines 则截断独占一块；超过 maxChunks 装不下的文件进 skipped。
+ */
+export function chunkFiles(
+  files: ParsedFile[],
+  maxLines: number,
+  maxChunks = 4,
+): { chunks: ParsedFile[][]; skipped: string[] } {
+  const sorted = [...files].sort((a, b) => b.lines.length - a.lines.length);
+  const chunks: { files: ParsedFile[]; used: number }[] = [];
+  const skipped: string[] = [];
+  for (const f of sorted) {
+    const cost = Math.min(f.lines.length, maxLines);
+    const fitted = f.lines.length > maxLines ? { ...f, lines: f.lines.slice(0, maxLines) } : f;
+    const slot = chunks.find((c) => c.used + cost <= maxLines);
+    if (slot) {
+      slot.files.push(fitted);
+      slot.used += cost;
+    } else if (chunks.length < maxChunks) {
+      chunks.push({ files: [fitted], used: cost });
+    } else {
+      skipped.push(f.path);
+    }
+  }
+  return { chunks: chunks.map((c) => c.files), skipped };
+}
+
 /** Prepare MR changes: filter ignored/binary, parse, enforce the total line budget. */
 export function prepareChanges(
   changes: MrChange[],

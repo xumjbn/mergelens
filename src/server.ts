@@ -54,41 +54,55 @@ export function startServer(cfg: Config, port: number): void {
     (botUser ??= (await new GitLab(cfg).getCurrentUser()).username);
   const gl2 = (): GitLab => new GitLab(cfg);
 
-  async function drain(): Promise<void> {
-    const job = queue.shift();
-    if (!job) return;
-    const key = `${job.project}!${job.iid}`;
-    if (running.has(key)) return void drain();
-    running.add(key);
-    try {
-      await reviewMr(cfg, job.project, job.iid);
-    } catch (err) {
-      const attempts = (job.attempts ?? 0) + 1;
-      if (attempts < MAX_ATTEMPTS) {
-        const delayS = attempts * 60; // 60s / 120s 退避重试
-        console.error(`[webhook] 审查 ${key} 失败（第 ${attempts} 次）：${(err as Error).message}，${delayS}s 后重试`);
-        setTimeout(() => {
-          queue.push({ ...job, attempts });
-          void drain();
-        }, delayS * 1000).unref();
-      } else {
-        console.error(`[webhook] 审查 ${key} 连续 ${MAX_ATTEMPTS} 次失败，放弃：${(err as Error).message}`);
-      }
-    } finally {
-      running.delete(key);
-      void drain();
+  // 不同 MR 并行（上限 CONCURRENCY），同一 MR 严格串行（留在队列里等 key 释放）
+  const CONCURRENCY = 3;
+  function drain(): void {
+    while (running.size < CONCURRENCY) {
+      const idx = queue.findIndex((j) => !running.has(`${j.project}!${j.iid}`));
+      if (idx === -1) break;
+      const job = queue.splice(idx, 1)[0];
+      const key = `${job.project}!${job.iid}`;
+      running.add(key);
+      void (async () => {
+        try {
+          await reviewMr(cfg, job.project, job.iid);
+        } catch (err) {
+          const attempts = (job.attempts ?? 0) + 1;
+          if (attempts < MAX_ATTEMPTS) {
+            const delayS = attempts * 60; // 60s / 120s 退避重试
+            console.error(`[webhook] 审查 ${key} 失败（第 ${attempts} 次）：${(err as Error).message}，${delayS}s 后重试`);
+            setTimeout(() => {
+              queue.push({ ...job, attempts });
+              drain();
+            }, delayS * 1000).unref();
+          } else {
+            console.error(`[webhook] 审查 ${key} 连续 ${MAX_ATTEMPTS} 次失败，放弃：${(err as Error).message}`);
+          }
+        } finally {
+          running.delete(key);
+          drain();
+        }
+      })();
     }
   }
 
   const server = createServer((req, res) => {
-    if (req.method === "GET" && (req.url === "/" || req.url === "/dashboard")) {
+    if (req.method === "GET" && (req.url === "/" || req.url?.startsWith("/?") || req.url === "/dashboard")) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      const selected = new URL(req.url!, "http://x").searchParams.get("project") ?? "";
+      let reviews = readReviews();
+      let feedback = readFeedback();
+      const projects = [...new Set(reviews.map((r) => r.project))].sort();
+      if (selected) {
+        reviews = reviews.filter((r) => r.project === selected);
+        feedback = feedback.filter((r) => r.project === selected);
+      }
       const mem = readMemory();
-      const risky = [...new Set(mem.map((m) => m.project))]
+      const risky = (selected ? [selected] : [...new Set(mem.map((m) => m.project))])
         .flatMap((p) => riskyFiles(mem, p, 2, 8).map((f) => ({ ...f, project: p })))
         .sort((a, b) => b.critical - a.critical || b.total - a.total)
         .slice(0, 8);
-      return void res.end(renderDashboard(readReviews(), readFeedback(), cfg, risky));
+      return void res.end(renderDashboard(reviews, feedback, cfg, risky, projects, selected));
     }
     if (req.method === "GET" && req.url === "/config") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -115,6 +129,7 @@ export function startServer(cfg: Config, port: number): void {
       });
     }
     if (req.method === "GET" && req.url?.startsWith("/api/skills?")) {
+      if (process.env.ADMIN_TOKEN && !adminOk(req)) return void json(res, 401, { error: "需要 x-admin-token" });
       const project = new URL(req.url, "http://x").searchParams.get("project") ?? "";
       return void (async () => {
         try {
@@ -200,6 +215,8 @@ export function startServer(cfg: Config, port: number): void {
       });
     }
     if (req.method === "GET" && req.url === "/api/reviews") {
+      // 审查记录含发现标题（可能带代码语义）——设置了 ADMIN_TOKEN 时要求口令
+      if (process.env.ADMIN_TOKEN && !adminOk(req)) return void json(res, 401, { error: "需要 x-admin-token" });
       res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
       return void res.end(JSON.stringify(readReviews()));
     }

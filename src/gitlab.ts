@@ -173,6 +173,28 @@ export class GitLab {
     return { id: created.id, updated: false };
   }
 
+  /** 群组级 webhook（组下所有项目一次生效）。 */
+  listGroupHooks(group: string | number): Promise<Array<{
+    id: number; url: string; merge_requests_events: boolean; note_events: boolean;
+  }>> {
+    return this.req("GET", `/groups/${this.proj(group)}/hooks`);
+  }
+
+  async installGroupHook(group: string | number, url: string, secret?: string): Promise<{ id: number; updated: boolean }> {
+    const body = {
+      url, merge_requests_events: true, note_events: true, push_events: false,
+      enable_ssl_verification: url.startsWith("https://"),
+      ...(secret ? { token: secret } : {}),
+    };
+    const existing = (await this.listGroupHooks(group)).find((h) => h.url === url);
+    if (existing) {
+      await this.req("PUT", `/groups/${this.proj(group)}/hooks/${existing.id}`, body);
+      return { id: existing.id, updated: true };
+    }
+    const created = await this.req<{ id: number }>("POST", `/groups/${this.proj(group)}/hooks`, body);
+    return { id: created.id, updated: false };
+  }
+
   /** 一段时间内已合并的 MR（发布说明用）。 */
   listMergedMrs(
     project: string | number,
@@ -206,7 +228,20 @@ export class GitLab {
     return this.req("GET", `/projects/${this.proj(project)}/merge_requests/${iid}/notes/${noteId}/award_emoji`);
   }
 
+  /** approve 门禁 */
+  approveMr(project: string | number, iid: number): Promise<unknown> {
+    return this.req("POST", `/projects/${this.proj(project)}/merge_requests/${iid}/approve`);
+  }
+
+  unapproveMr(project: string | number, iid: number): Promise<unknown> {
+    return this.req("POST", `/projects/${this.proj(project)}/merge_requests/${iid}/unapprove`);
+  }
+
   /* ---------------- Issues ---------------- */
+
+  getIssue(project: string | number, iid: number): Promise<GitLabIssue> {
+    return this.req("GET", `/projects/${this.proj(project)}/issues/${iid}`);
+  }
 
   createIssue(
     project: string | number,

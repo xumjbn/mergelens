@@ -23,6 +23,9 @@ export interface ReviewRecord {
   model: string;
   /** MR 页面直达链接 */
   url?: string;
+  /** 本次审查消耗的 token（输入/输出，所有 AI 调用合计） */
+  tokensIn?: number;
+  tokensOut?: number;
   /** 发现快照（看板详情展开用，最多 20 条） */
   details?: Array<{ file: string; line: number | null; severity: string; title: string; skill: string; confidence: number }>;
 }

@@ -68,7 +68,7 @@ make serve                                   # 启动 Webhook 服务（默认 30
 | 命令 | 说明 |
 |---|---|
 | `doctor [project]` | 自检：GitLab 认证、项目权限、AI 连通性、skill 加载，逐项给修复提示 |
-| `review <project> <iid> [--dry-run] [--full]` | 审查 MR，发布行内评论和总评；有门禁级问题时退出码 1（可做 CI 卡点） |
+| `review <project> <iid> [--dry-run] [--full] [--create-issues]` | 审查 MR，发布行内评论和总评；`--create-issues` 时高危/严重发现自动转 Issue（带判重）；有门禁级问题时退出码 1（可做 CI 卡点） |
 | `stats` | 审查记录统计：次数、发现分布、拦截率、最近 10 次（数据在 `data/reviews.jsonl`） |
 | `summarize <project> <iid> [--update-desc]` | 生成「改了什么/为什么/影响面」摘要，发评论或写入 MR 描述 |
 | `issues list <project> [--search q]` | 检索 Issue |
@@ -128,6 +128,8 @@ npx tsx src/cli.ts stop                # 停止
    - 勾选 **Merge request events** 和 **Comments**（后者用于 @机器人 对话）
 3. Token 用**群组 Access Token**（群组 → Settings → Access Tokens，Developer 角色 + api scope），
    一个 token 覆盖组下所有项目，评论显示为独立 bot 身份。
+   群组 webhook 也可以命令注册：`mergelens hook install <group> --url ... --group`。
+   服务端并发：不同 MR 最多 3 个并行审查，同一 MR 严格串行。
 4. 触发规则：**新开 MR、reopen、向 MR 分支 push 新提交**都会自动审查（push 走增量）；
    同一 MR 连续多次触发会排队串行，同一 sha 重复触发直接跳过。
 
@@ -167,8 +169,11 @@ diff 上下文回复，在原讨论串里回，不另开评论：
 
 - `@ai 这条是误报吧？` —— bot 重新评估：站得住就有理有据地坚持，确属误报会明确承认
 - `@ai 这里怎么改比较好` —— 给出可直接粘贴的修复代码
+- `@ai 转issue` —— 在某条发现的讨论串里说，把该发现转为 Issue（自动判重，带来源链接）
 - `@ai 重新审查` —— 触发全量重审
 - `@ai 生成摘要` —— 生成 MR 摘要
+
+在讨论串里**追问**时，bot 会带上该串的历史对话（最近 10 条），上下文不丢。
 
 > 为什么用触发词而不是真 @：项目/群组 Access Token 对应的 bot 用户名是
 > `project_123_bot_xxx` 这类，在评论区 @ 补全里搜不到。触发词是纯文本匹配，
@@ -271,10 +276,20 @@ severity_weight: 0.8
 ## 审查流水线
 
 ```
-拉取 MR diff → 忽略路径过滤 + 行数预算 → 各 skill 并行审查
-  → 去重 → 置信度门槛 → 反驳验证（质疑者模型尝试推翻）
-  → 行内评论（锚定新增行）+ 总评（含风险表格与门禁结论）
+拉取 MR diff → 忽略过滤 → 大 MR 分片（贪心装箱，≤4 块并行，不再静默丢文件）
+  → 解析关联 Issue（校验"改动是否真正解决了 Issue"）→ 脱敏 → 各 skill × 分片并行审查
+  → 去重 → 反馈调权 → 置信度门槛 → 反驳验证（质疑者模型尝试推翻）
+  → 行内评论（锚定新增行）+ 总评 + 可选 approve 投票 + 大 MR 自动摘要
 ```
+
+相关配置（`.ai-review.yml` 的 review 段）：
+
+- `redact_patterns`：发给 LLM 前按正则脱敏（内网 IP/域名等），命中替换为 `[已脱敏]`
+- `auto_summary_lines: 400`：全量审查 diff 超过该行数自动生成 MR 摘要（0=关）
+- `vote: approve`：审查通过自动点 approve、不通过撤销（token 需 approve 权限）
+- `daily_token_budget`：每日 token 预算（0=不限），超出后当天跳过审查；
+  每次审查的 token 消耗记录在案，看板有消耗卡片
+- Issue 联动零配置：MR 描述里引用 `#123` 即自动拉取校验（最多 3 个）
 
 ## 增量审查
 

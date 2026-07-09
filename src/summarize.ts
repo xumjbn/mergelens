@@ -1,7 +1,7 @@
 import type { Config } from "./types.js";
 import { GitLab } from "./gitlab.js";
 import { chat } from "./ai.js";
-import { annotate, prepareChanges } from "./diff.js";
+import { annotate, prepareChanges, redact } from "./diff.js";
 
 const MARKER = "<!-- mergelens:summary -->";
 
@@ -37,7 +37,7 @@ MR 描述：${(mr.description || "（无）").slice(0, 1500)}
 ${skipped.length > 0 ? `（另有 ${skipped.length} 个文件被忽略规则跳过）` : ""}
 
 ## Diff
-${files.map(annotate).join("\n\n")}`;
+${redact(files.map(annotate).join("\n\n"), cfg.review.redactPatterns)}`;
 
   const summary = (await chat(cfg.ai, system, user, {
     model: cfg.ai.lightModel, // 摘要用轻量模型即可

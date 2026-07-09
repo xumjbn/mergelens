@@ -12,7 +12,8 @@ const HELP = `mergelens — GitLab AI 代码审查助手
 
 用法：
   mergelens doctor [project]                        自检：GitLab 连通性 / AI key / skills
-  mergelens review <project> <mr-iid> [--dry-run] [--full]   审查 MR（默认增量：只审上次之后的新提交）
+  mergelens review <project> <mr-iid> [--dry-run] [--full] [--create-issues]
+                                                    审查 MR（--create-issues 高危/严重发现自动转 Issue）
   mergelens stats                                   审查记录统计（数据在 data/reviews.jsonl）
   mergelens changelog <project> [--days 14] [--target 分支]   从已合并 MR 生成发布说明
   mergelens heatmap <project>                       风险热力：高危文件 + 惯犯问题模式
@@ -20,9 +21,9 @@ const HELP = `mergelens — GitLab AI 代码审查助手
   mergelens feedback <project> <mr-iid>             手动结算某 MR 的采纳反馈（合并时会自动结算）
   mergelens issues list <project> [--search 关键词] [--state opened|closed|all]
   mergelens issues create <project> --title "标题" [--desc "描述"] [--labels a,b]
-  mergelens hook list <project>                     查看项目 webhook 配置（事件勾选情况）
-  mergelens hook install <project> --url http://部署机:3000/webhook [--secret s]
-                                                    自动注册/修复 webhook（MR + Comments 事件）
+  mergelens hook list <project|group> [--group]     查看 webhook 配置（--group 为群组级）
+  mergelens hook install <project|group> --url http://部署机:3000/webhook [--secret s] [--group]
+                                                    自动注册/修复 webhook（--group 群组级，一次覆盖组下全部项目）
   mergelens serve [--port 3000]                     前台启动服务（Ctrl+C 退出）
   mergelens start [--port 3000]                     后台常驻启动（脱离终端）
   mergelens stop                                    停止后台服务
@@ -89,6 +90,7 @@ async function main(): Promise<void> {
       const result = await reviewMr(cfg, project, parseInt(iidStr, 10), {
         dryRun: has("--dry-run"),
         fullReview: has("--full"),
+        createIssues: has("--create-issues"),
       });
       console.log("\n" + result.summary + "\n");
       if (has("--dry-run")) {
@@ -133,10 +135,11 @@ async function main(): Promise<void> {
       if (!project) throw new Error("用法：mergelens hook <list|install> <project> [--url ...]");
       requireToken(cfg);
       const gl = new GitLab(cfg);
+      const isGroup = has("--group");
       if (sub === "list") {
-        const hooks = await gl.listProjectHooks(project);
+        const hooks = isGroup ? await gl.listGroupHooks(project) : await gl.listProjectHooks(project);
         if (hooks.length === 0) {
-          console.log("该项目没有配置任何 webhook。注册：mergelens hook install " + project + " --url http://部署机:3000/webhook");
+          console.log(`该${isGroup ? "群组" : "项目"}没有配置任何 webhook。注册：mergelens hook install ${project} --url http://部署机:3000/webhook${isGroup ? " --group" : ""}`);
           break;
         }
         for (const h of hooks) {
@@ -147,8 +150,10 @@ async function main(): Promise<void> {
         const url = arg("--url");
         if (!url) throw new Error("需要 --url，例如 --url http://部署机:3000/webhook");
         const secret = arg("--secret") ?? process.env.WEBHOOK_SECRET;
-        const r = await gl.installProjectHook(project, url, secret);
-        console.log(`${r.updated ? "已更新" : "已创建"} webhook #${r.id}：${url}`);
+        const r = isGroup
+          ? await gl.installGroupHook(project, url, secret)
+          : await gl.installProjectHook(project, url, secret);
+        console.log(`${r.updated ? "已更新" : "已创建"}${isGroup ? "群组" : "项目"} webhook #${r.id}：${url}`);
         console.log(`  已勾选：Merge request events ✓  Comments ✓${secret ? "  Secret ✓" : "  （无 Secret）"}`);
         console.log(`  下一步：确保 mergelens start 常驻运行，且 GitLab 能访问该 URL（GitLab 服务器上 curl ${url.replace(/\/webhook$/, "/health")}）`);
       } else {

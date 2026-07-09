@@ -47,6 +47,14 @@ export interface ReviewConfig {
   verify: boolean;
   /** re-review only pushes since the last reviewed sha, skip already-reviewed shas */
   incremental: boolean;
+  /** 发给 LLM 前脱敏的正则列表（内网域名/IP 等），命中替换为 [已脱敏] */
+  redactPatterns: string[];
+  /** 全量审查 diff 超过该行数时自动生成 MR 摘要（0=关闭） */
+  autoSummaryLines: number;
+  /** approve 门禁：审查通过自动 approve、不通过撤销（off 关闭） */
+  vote: "off" | "approve";
+  /** 每日 token 预算（输入+输出，0=不限制），超出后跳过审查 */
+  dailyTokenBudget: number;
   /** drop findings below this confidence (0-100) */
   minConfidence: number;
   language: string;

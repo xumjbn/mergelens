@@ -10,6 +10,8 @@ export function renderDashboard(
   feedback: FeedbackRecord[],
   cfg: Config,
   risky: Array<{ file: string; total: number; critical: number; project?: string }> = [],
+  projects: string[] = [],
+  selected = "",
 ): string {
   const fSum = (f: (r: FeedbackRecord) => number) => feedback.reduce((s, r) => s + f(r), 0);
   const fbFindings = fSum((r) => r.findings);
@@ -123,12 +125,22 @@ function toggleDetail(i){
   <a href="/config" style="font-size:13px;font-weight:400;color:var(--accent);margin-left:10px">⚙ 配置</a>
   <a href="/skills" style="font-size:13px;font-weight:400;color:var(--accent);margin-left:6px">🧩 Skills</a></h1>
 <div class="sub">数据每 60s 自动刷新 · JSON API：<span class="mono">/api/reviews</span> · 健康检查：<span class="mono">/health</span></div>
+${projects.length > 1 ? `<div style="margin:-8px 0 18px">
+  <select class="mono" style="padding:5px 10px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink)"
+    onchange="location = this.value ? '/?project=' + encodeURIComponent(this.value) : '/'">
+    <option value="">全部项目（${projects.length}）</option>
+    ${projects.map((p) => `<option value="${esc(p)}"${p === selected ? " selected" : ""}>${esc(p)}</option>`).join("")}
+  </select></div>` : ""}
 
 <div class="tiles">
   <div class="card"><div class="k">累计审查</div><div class="v">${total}<small> 次（近7天 ${week.length}）</small></div></div>
   <div class="card"><div class="k">发现问题</div><div class="v">${critical + serious + suggestion}<small> 🔴${critical} 🟠${serious} 🟡${suggestion}</small></div></div>
   <div class="card"><div class="k">门禁拦截率</div><div class="v">${blockRate}<small>%（${needsWork} 次建议修复）</small></div></div>
   <div class="card"><div class="k">建议采纳率</div><div class="v">${adoption === null ? "—" : adoption + '<small>%</small>'}<small> 👍${fSum((r) => r.up)} 👎${fSum((r) => r.down)} · 已结算 ${feedback.length} 个 MR</small></div></div>
+  <div class="card"><div class="k">Token 消耗</div><div class="v">${(() => {
+    const tok = records.reduce((s, r) => s + (r.tokensIn ?? 0) + (r.tokensOut ?? 0), 0);
+    return tok > 0 ? (tok / 10000).toFixed(1) + '<small> 万</small>' : "—";
+  })()}<small>${cfg.review.dailyTokenBudget > 0 ? ` 日预算 ${(cfg.review.dailyTokenBudget / 10000).toFixed(0)} 万` : " 未设预算"}</small></div></div>
   <div class="card"><div class="k">低置信度自动过滤</div><div class="v">${sum((r) => r.filtered)}<small> 条（降噪）</small></div></div>
 </div>
 

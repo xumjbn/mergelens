@@ -1,11 +1,13 @@
-import type { Config, Finding, MrChange, MrInfo, ParsedFile, Severity, Skill } from "../types.js";
+import type { Config, Finding, GitLabIssue, MrChange, MrInfo, ParsedFile, Severity, Skill } from "../types.js";
 import { GitLab } from "../gitlab.js";
-import { chat, extractJson } from "../ai.js";
-import { addedLineSet, annotate, prepareChanges } from "../diff.js";
+import { chat, extractJson, tokenMeter } from "../ai.js";
+import { addedLineSet, annotate, chunkFiles, prepareChanges, redact } from "../diff.js";
+import { createIssueFromFinding } from "../issues.js";
+import { summarizeMr } from "../summarize.js";
 import { loadRepoSkills, loadSkills, mergeSkills, skillApplies } from "../skills.js";
 import { resolveProjectConfig } from "../config.js";
 import { lastReviewedSha, previousFindingTitles, reviewMarker } from "./incremental.js";
-import { recordMemory, recordReview, readMemory, readSkillOutcomes } from "../store.js";
+import { readReviews, recordMemory, recordReview, readMemory, readSkillOutcomes } from "../store.js";
 import { notifyReview } from "../notify.js";
 import { recurringPatterns, riskyFiles, skillTrust, type Pattern, type RiskyFile } from "../memory.js";
 
@@ -48,6 +50,7 @@ function reviewUserPrompt(
   prevTitles: string[],
   patterns: Pattern[] = [],
   risky: RiskyFile[] = [],
+  linkedIssues: GitLabIssue[] = [],
 ): string {
   const prev = prevTitles.length > 0
     ? `\n## 此前审查已指出过的问题（不要重复报告，除非本次改动引入了新的实例）\n${prevTitles.map((t) => `- ${t}`).join("\n")}\n`
@@ -58,11 +61,14 @@ function reviewUserPrompt(
   const heat = risky.length > 0
     ? `\n## 高风险文件（历史审查中问题聚集，请对这些文件的改动从严审查）\n${risky.map((f) => `- ${f.file}（历史发现 ${f.total} 条，其中高危/严重 ${f.critical} 条）`).join("\n")}\n`
     : "";
+  const iss = linkedIssues.length > 0
+    ? `\n## MR 关联的 Issue（请校验本次改动是否真正解决了 Issue 描述的问题——未解决或只解决一部分时，作为发现报告，title 以"关联 Issue 校验"开头，line 用改动最相关的行）\n${linkedIssues.map((i) => `- #${i.iid} ${i.title}：${(i.description ?? "").slice(0, 300).replace(/\n/g, " ")}`).join("\n")}\n`
+    : "";
   return `## MR 信息
 标题：${mr.title}
 描述：${(mr.description || "（无）").slice(0, 1500)}
 分支：${mr.source_branch} → ${mr.target_branch}
-${prev}${mem}${heat}
+${prev}${mem}${heat}${iss}
 ## Diff（行首数字 = 新文件行号，+ 新增，- 删除）
 
 ${files.map(annotate).join("\n\n")}`;
@@ -78,10 +84,11 @@ export async function reviewMr(
   cfg: Config,
   project: string | number,
   iid: number,
-  opts: { dryRun?: boolean; fullReview?: boolean } = {},
+  opts: { dryRun?: boolean; fullReview?: boolean; createIssues?: boolean } = {},
 ): Promise<ReviewResult> {
   const gl = new GitLab(cfg);
   const t0 = Date.now();
+  tokenMeter.reset();
 
   console.error(`[review] 拉取 MR ${project}!${iid} ...`);
   const mr = await gl.getMr(project, iid);
@@ -90,6 +97,32 @@ export async function reviewMr(
   const resolved = await resolveProjectConfig(cfg, gl, project, mr.target_branch);
   cfg = resolved.cfg;
   console.error(`[review] 配置来源：${resolved.source}`);
+
+  // 每日 token 预算（成本兜底）
+  if (cfg.review.dailyTokenBudget > 0) {
+    const today = new Date().toISOString().slice(0, 10);
+    const used = readReviews()
+      .filter((r) => r.ts.startsWith(today))
+      .reduce((s, r) => s + (r.tokensIn ?? 0) + (r.tokensOut ?? 0), 0);
+    if (used >= cfg.review.dailyTokenBudget) {
+      console.error(`[review] 今日 token 预算已用尽（${used}/${cfg.review.dailyTokenBudget}），跳过`);
+      return {
+        mr, findings: [], filtered: 0, skippedFiles: [], verdict: "approve",
+        summary: `今日 token 预算已用尽（${used}/${cfg.review.dailyTokenBudget}），本次审查跳过。`,
+        incremental: false, skipped: true,
+      };
+    }
+  }
+
+  // Issue ↔ MR 联动：解析描述里引用的 issue，交给模型校验"改动是否真正解决"
+  const linkedIssues: GitLabIssue[] = [];
+  const refs = [...new Set([...(mr.description ?? "").matchAll(/#(\d+)/g)].map((m) => parseInt(m[1], 10)))].slice(0, 3);
+  for (const r of refs) {
+    try { linkedIssues.push(await gl.getIssue(project, r)); } catch { /* 引用的 issue 不存在则忽略 */ }
+  }
+  if (linkedIssues.length > 0) {
+    console.error(`[review] 关联 Issue：${linkedIssues.map((i) => "#" + i.iid).join(" ")}（将校验是否解决）`);
+  }
 
   // 增量审查：从本 bot 历史评论里找上次审到的 sha，只比对增量
   let changes: MrChange[] | undefined;
@@ -125,16 +158,20 @@ export async function reviewMr(
   }
   changes ??= await gl.getMrChanges(project, iid);
 
-  const { files, skipped, truncated } = prepareChanges(
-    changes,
-    cfg.review.ignorePaths,
-    cfg.review.maxDiffLines,
-  );
-  if (files.length === 0) {
+  // 忽略过滤后不再按预算丢文件——改为分片并行审查
+  const prep = prepareChanges(changes, cfg.review.ignorePaths, Number.MAX_SAFE_INTEGER);
+  const files = prep.files;
+  const { chunks, skipped: overflow } = chunkFiles(files, cfg.review.maxDiffLines);
+  const skipped = [...prep.skipped, ...overflow];
+  const truncated = overflow.length > 0;
+  if (files.length === 0 || chunks.length === 0) {
     return {
       mr, findings: [], filtered: 0, skippedFiles: skipped, verdict: "approve",
       summary: "没有可审查的文本改动（可能全部命中忽略规则）。", incremental,
     };
+  }
+  if (chunks.length > 1) {
+    console.error(`[review] 大 MR 分片：${files.length} 个文件拆成 ${chunks.length} 块并行审查`);
   }
 
   const changedPaths = files.map((f) => f.path);
@@ -154,17 +191,24 @@ export async function reviewMr(
   const risky = riskyFiles(mem, String(project)).filter((f) => changedPaths.includes(f.file));
   if (patterns.length > 0) console.error(`[review] 记忆库：${patterns.length} 个惯犯模式注入提示词`);
   if (risky.length > 0) console.error(`[review] 热力：本次涉及 ${risky.length} 个高风险文件（${risky.map((f) => f.file).join(", ")}）`);
-  const userPrompt = reviewUserPrompt(mr, files, prevTitles, patterns, risky);
+  // 每个分片一份提示词，发出前统一脱敏
+  const chunkPrompts = chunks.map((chunk) =>
+    redact(reviewUserPrompt(mr, chunk, prevTitles, patterns, risky, linkedIssues), cfg.review.redactPatterns),
+  );
   const perSkill = await Promise.all(
     skills.map(async (skill) => {
-      try {
-        const out = await chat(cfg.ai, reviewSystemPrompt(cfg, skill), userPrompt, { model: skill.model });
-        const arr = extractJson<Omit<Finding, "skill">[]>(out);
-        return arr.map((f) => ({ ...f, skill: skill.name }));
-      } catch (err) {
-        console.error(`[review] skill ${skill.name} 失败：${(err as Error).message}`);
-        return [];
-      }
+      const perChunk = await Promise.all(
+        chunkPrompts.map(async (prompt) => {
+          try {
+            const out = await chat(cfg.ai, reviewSystemPrompt(cfg, skill), prompt, { model: skill.model });
+            return extractJson<Omit<Finding, "skill">[]>(out);
+          } catch (err) {
+            console.error(`[review] skill ${skill.name} 失败：${(err as Error).message}`);
+            return [];
+          }
+        }),
+      );
+      return perChunk.flat().map((f) => ({ ...f, skill: skill.name }));
     }),
   );
 
@@ -206,7 +250,7 @@ export async function reviewMr(
       findings.map(async (f) => {
         try {
           const fileDiff = files.find((x) => x.path === f.file);
-          const ctx = fileDiff ? annotate(fileDiff).slice(0, 6000) : "";
+          const ctx = fileDiff ? redact(annotate(fileDiff).slice(0, 6000), cfg.review.redactPatterns) : "";
           const out = await chat(
             cfg.ai, VERIFY_SYSTEM,
             `## 发现\n${JSON.stringify(f, null, 2)}\n\n## 相关 diff\n${ctx}`,
@@ -245,6 +289,47 @@ export async function reviewMr(
     }
     await gl.postMrNote(project, iid, summary);
     console.error(`[review] 已发布 ${inline.length} 条行内评论 + 1 条总评`);
+
+    // 高危/严重发现自动转 Issue（--create-issues / @ai 转issue）
+    if (opts.createIssues) {
+      const created: string[] = [];
+      for (const f of findings.filter((x) => x.severity !== "suggestion")) {
+        try {
+          const { issue, duplicate } = await createIssueFromFinding(cfg, project, f, mr);
+          created.push(`#${issue.iid}${duplicate ? "（判重命中已有）" : ""}`);
+        } catch (err) {
+          console.error(`[issues] 「${f.title}」转 Issue 失败：${(err as Error).message}`);
+        }
+      }
+      if (created.length > 0) {
+        await gl.postMrNote(project, iid, `📌 已为高危/严重发现创建 Issue：${created.join("、")}`);
+        console.error(`[issues] 已创建 ${created.length} 个 Issue`);
+      }
+    }
+
+    // approve 门禁投票
+    if (cfg.review.vote === "approve") {
+      try {
+        if (verdict === "approve") await gl.approveMr(project, iid);
+        else await gl.unapproveMr(project, iid);
+        console.error(`[review] 门禁投票：${verdict === "approve" ? "已 approve" : "已撤销 approve"}`);
+      } catch (err) {
+        console.error(`[review] 投票失败（token 需要 approve 权限）：${(err as Error).message}`);
+      }
+    }
+
+    // 大 MR 自动摘要（全量审查时）
+    if (!incremental && cfg.review.autoSummaryLines > 0) {
+      const totalLines = files.reduce((s, f) => s + f.lines.length, 0);
+      if (totalLines > cfg.review.autoSummaryLines) {
+        try {
+          await summarizeMr(cfg, project, iid, {});
+          console.error(`[review] diff ${totalLines} 行超过 ${cfg.review.autoSummaryLines}，已自动生成 MR 摘要`);
+        } catch (err) {
+          console.error(`[summary] 自动摘要失败：${(err as Error).message}`);
+        }
+      }
+    }
   }
 
   const counts = { critical: 0, serious: 0, suggestion: 0 } as Record<Severity, number>;
@@ -255,6 +340,7 @@ export async function reviewMr(
     verdict, ...counts, filtered,
     incremental, dryRun: !!opts.dryRun,
     durationMs: Date.now() - t0, model: cfg.ai.model,
+    tokensIn: tokenMeter.input, tokensOut: tokenMeter.output,
     url: mr.web_url,
     details: findings.slice(0, 20).map((f) => ({
       file: f.file, line: f.line, severity: f.severity, title: f.title,
