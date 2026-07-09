@@ -44,6 +44,9 @@ function has(flag: string): boolean {
 
 async function main(): Promise<void> {
   const [, , cmd, ...rest] = process.argv;
+  const { loadDotEnv } = await import("./env.js");
+  const envFile = loadDotEnv(); // .env 补齐环境变量（已设置的优先）
+  if (envFile) console.error(`[env] 已加载 ${envFile}`);
   setupProxyFromEnv(); // Node fetch 默认不认 HTTP(S)_PROXY，这里显式挂上
   const cfg = loadConfig();
 

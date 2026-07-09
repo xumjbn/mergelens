@@ -223,8 +223,10 @@ export function startServer(cfg: Config, port: number): void {
   });
 }
 
-// direct entry: `tsx src/server.ts`
+// direct entry: `tsx src/server.ts`（daemon start 也走这里）
 if (process.argv[1] && /server\.(ts|js)$/.test(process.argv[1])) {
+  const { loadDotEnv } = await import("./env.js");
+  loadDotEnv();
   const { setupProxyFromEnv } = await import("./net.js");
   setupProxyFromEnv();
   const cfg = loadConfig();
