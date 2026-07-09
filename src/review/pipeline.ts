@@ -243,6 +243,11 @@ export async function reviewMr(
     verdict, ...counts, filtered,
     incremental, dryRun: !!opts.dryRun,
     durationMs: Date.now() - t0, model: cfg.ai.model,
+    url: mr.web_url,
+    details: findings.slice(0, 20).map((f) => ({
+      file: f.file, line: f.line, severity: f.severity, title: f.title,
+      skill: f.skill, confidence: f.confidence,
+    })),
   });
 
   if (!opts.dryRun) {

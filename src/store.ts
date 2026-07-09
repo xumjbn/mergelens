@@ -21,6 +21,10 @@ export interface ReviewRecord {
   dryRun: boolean;
   durationMs: number;
   model: string;
+  /** MR 页面直达链接 */
+  url?: string;
+  /** 发现快照（看板详情展开用，最多 20 条） */
+  details?: Array<{ file: string; line: number | null; severity: string; title: string; skill: string; confidence: number }>;
 }
 
 /** MR 合并时结算的反馈：resolve = 采纳，👍/👎 = 显式反馈 */

@@ -4,7 +4,8 @@ import type { Config } from "./types.js";
 import { fileConfigToYaml, loadConfig, requireAiKey, requireToken, serverConfigPath } from "./config.js";
 import { GitLab } from "./gitlab.js";
 import { reviewMr, testSkillOnMr } from "./review/pipeline.js";
-import { loadSkills, parseSkill, REPO_SKILLS_DIR } from "./skills.js";
+import { listBuiltinFiles, parseSkill, skillsRoot, REPO_SKILLS_DIR } from "./skills.js";
+import { join } from "node:path";
 import { readFeedback, readMemory, readReviews } from "./store.js";
 import { riskyFiles } from "./memory.js";
 import { renderConfigPage, renderDashboard, renderSkillsPage } from "./web.js";
@@ -84,7 +85,23 @@ export function startServer(cfg: Config, port: number): void {
     }
     if (req.method === "GET" && req.url === "/skills") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      return void res.end(renderSkillsPage(loadSkills(cfg.review.skillsDir, "all")));
+      return void res.end(renderSkillsPage(listBuiltinFiles(cfg.review.skillsDir)));
+    }
+    if (req.method === "POST" && req.url === "/api/skills/builtin") {
+      if (!adminOk(req)) return void json(res, 401, { error: "管理口令错误（ADMIN_TOKEN）" });
+      return void readBody(req).then((body) => {
+        try {
+          const { file, content } = JSON.parse(body);
+          if (!/^[\w-]+\.md$/.test(file)) throw new Error("文件名只能是 字母数字-下划线.md");
+          const root = skillsRoot(cfg.review.skillsDir);
+          if (!root) throw new Error("找不到内置 skill 目录");
+          writeFileSync(join(root, file), content, "utf8");
+          console.error(`[skills] 内置规则已更新：${join(root, file)}`);
+          json(res, 200, { ok: true, path: join(root, file) });
+        } catch (err) {
+          json(res, 400, { error: (err as Error).message });
+        }
+      });
     }
     if (req.method === "GET" && req.url?.startsWith("/api/skills?")) {
       const project = new URL(req.url, "http://x").searchParams.get("project") ?? "";

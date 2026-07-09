@@ -213,20 +213,26 @@ t("推送消息构造", () => {
 import { renderDashboard } from "../src/web.js";
 import { loadConfig } from "../src/config.js";
 
-t("看板渲染（含采纳率）", () => {
+t("看板渲染（含采纳率与详情展开）", () => {
   const html = renderDashboard([{
     ts: new Date().toISOString(), project: "g/r", iid: 7, title: "标题<script>",
     verdict: "needs-work", critical: 1, serious: 0, suggestion: 2, filtered: 1,
     incremental: false, dryRun: false, durationMs: 90000, model: "m",
+    url: "https://gl/x/-/merge_requests/7",
+    details: [{ file: "a.ts", line: 3, severity: "critical", title: "SQL 注入", skill: "security", confidence: 90 }],
   }], [
     { ts: "2026-07-09T10:00:00Z", project: "g/r", iid: 7, findings: 4, resolved: 3, up: 2, down: 1 },
   ], loadConfig());
   assert.ok(html.includes("审查看板"));
   assert.ok(html.includes("g/r!7"));
-  assert.ok(!html.includes("<script>")); // XSS 转义
+  assert.ok(!html.includes("标题<script>")); // 用户内容必须被转义
+  assert.ok(html.includes("标题&lt;script&gt;"));
   assert.ok(html.includes("⛔ 建议修复"));
   assert.ok(html.includes("75")); // 采纳率 3/4
   assert.ok(html.includes("👍2 👎1"));
+  assert.ok(html.includes("toggleDetail(0)")); // 详情可展开
+  assert.ok(html.includes("SQL 注入") && html.includes("a.ts:3"));
+  assert.ok(html.includes("在 GitLab 打开 MR"));
 });
 
 /* ---- memory 记忆库 ---- */
@@ -258,14 +264,23 @@ t("memory：惯犯模式与风险文件", () => {
 
 /* ---- skills 页 ---- */
 import { renderSkillsPage } from "../src/web.js";
-import { loadSkills } from "../src/skills.js";
+import { listBuiltinFiles, loadSkills } from "../src/skills.js";
 
-t("Skill 页渲染（内置列表）", () => {
-  const html = renderSkillsPage(loadSkills("skills", "all"));
+t("Skill 页渲染（内置列表，含 go，可编辑）", () => {
+  const builtins = listBuiltinFiles("skills");
+  assert.ok(builtins.some((b) => b.skill.name === "go")); // 新增的 Go 审查
+  const html = renderSkillsPage(builtins);
   assert.ok(html.includes("correctness"));
   assert.ok(html.includes("security"));
+  assert.ok(html.includes("editBuiltin(")); // 内置可编辑
   assert.ok(html.includes("效果回放"));
   assert.ok(html.includes(".mergelens/skills"));
+});
+
+t("go skill 只对 .go 文件触发", () => {
+  const go = loadSkills("skills", "all").find((s) => s.name === "go")!;
+  assert.ok(skillApplies(go, ["pkg/server/main.go"]));
+  assert.ok(!skillApplies(go, ["src/app.ts", "README.md"]));
 });
 
 /* ---- assistant ---- */

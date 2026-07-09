@@ -38,20 +38,37 @@ export function parseSkill(fileName: string, raw: string): Skill {
   };
 }
 
+/** 解析内置 skill 实际所在目录（配置目录不存在时回落到随包发布的 skills/）。 */
+export function skillsRoot(dir: string): string | null {
+  if (existsSync(dir)) return dir;
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const candidate of [join(here, "..", "skills"), join(here, "..", "..", "skills")]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 /** Load skills from dir; falls back to the skills/ folder shipped with mergelens. */
 export function loadSkills(dir: string, enabled: string[] | "all"): Skill[] {
-  let root = dir;
-  if (!existsSync(root)) {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const bundled = join(here, "..", "skills");
-    if (existsSync(bundled)) root = bundled;
-    else return [];
-  }
+  const root = skillsRoot(dir);
+  if (!root) return [];
   const skills = readdirSync(root)
     .filter((f) => f.endsWith(".md"))
     .map((f) => parseSkill(f, readFileSync(join(root, f), "utf8")));
   if (enabled === "all") return skills;
   return skills.filter((s) => enabled.includes(s.name));
+}
+
+/** 内置 skill 的文件原文（在线编辑页用，raw 含 frontmatter）。 */
+export function listBuiltinFiles(dir: string): Array<{ file: string; raw: string; skill: Skill }> {
+  const root = skillsRoot(dir);
+  if (!root) return [];
+  return readdirSync(root)
+    .filter((f) => f.endsWith(".md"))
+    .map((f) => {
+      const raw = readFileSync(join(root, f), "utf8");
+      return { file: f, raw, skill: parseSkill(f, raw) };
+    });
 }
 
 /** Does this skill apply to at least one changed file? */
