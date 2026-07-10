@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { readFeedback, readMemory, readReviews } from "./store.js";
 import { riskyFiles } from "./memory.js";
 import { renderConfigPage, renderDashboard, renderLogsPage, renderSkillsPage } from "./web.js";
-import { answerMention, stripMention } from "./assistant.js";
+import { answerMention, isOwnBotOutput, stripMention } from "./assistant.js";
 import { collectFeedback } from "./feedback.js";
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -286,15 +286,20 @@ export function startServer(cfg: Config, port: number): void {
           track({ ts, kind, project: `${projectPath}!${mrIid}`, decision: `收到评论事件（@${event.user?.username ?? "?"}），判断是否触发…` });
           void (async () => {
             try {
+              const author = event.user?.username ?? "";
+              const note = String(attrs.note ?? "");
+              // 不能按「作者 == bot」过滤：个人 token 场景下 bot 身份就是使用者本人，
+              // 会把用户的 @ai 误当成自身输出丢弃。改为按内容标记识别（防自我循环）。
+              if (isOwnBotOutput(note)) {
+                track({ ts, kind, project: `${projectPath}!${mrIid}`, decision: "忽略：mergelens 自身的输出" });
+                return;
+              }
               let bot = "";
               try {
                 bot = await getBotUser();
               } catch (err) {
                 console.error("[assistant] 获取 bot 用户名失败（触发词仍可用）：" + (err as Error).message);
               }
-              const author = event.user?.username ?? "";
-              if (bot && author === bot) return; // 自己发的评论，静默跳过
-              const note = String(attrs.note ?? "");
               const trigger = cfg.assistant.trigger;
               const hit =
                 (bot && note.includes(`@${bot}`)) ||

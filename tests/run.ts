@@ -341,7 +341,14 @@ t("go skill 只对 .go 文件触发", () => {
 });
 
 /* ---- assistant ---- */
-import { stripMention } from "../src/assistant.js";
+import { isOwnBotOutput, stripMention, REPLY_MARK } from "../src/assistant.js";
+
+t("自身输出识别（个人 token 场景不误杀用户提问）", () => {
+  assert.ok(isOwnBotOutput("好的，已确认。" + REPLY_MARK));
+  assert.ok(isOwnBotOutput("<!-- mergelens:review sha=abc123def456 -->\n## 审查结果"));
+  assert.ok(isOwnBotOutput("🔴 高危 **xx**\n---\n*mergelens AI 审查 · 认为误报请回复 👎*"));
+  assert.ok(!isOwnBotOutput("@ai 这条是误报吧？")); // 用户提问，即使作者与 token 同名也必须处理
+});
 
 t("@提及/触发词剥离", () => {
   assert.equal(stripMention("@review-bot 这条是误报吧？", ["@review-bot", "@ai"]), "这条是误报吧？");

@@ -7,6 +7,19 @@ import { reviewMr } from "./review/pipeline.js";
 import { summarizeMr } from "./summarize.js";
 import { createIssueFromNoteBody } from "./issues.js";
 
+/** bot 所有回复都带的隐形标记（GitLab 页面不显示），用于识别自身输出、防自我循环。 */
+export const REPLY_MARK = "\n\n<!-- mergelens:reply -->";
+
+/** 这条评论是不是 mergelens 自己发的（回复/审查/摘要任一标记命中）。 */
+export function isOwnBotOutput(note: string): boolean {
+  return (
+    note.includes("mergelens:reply") ||
+    note.includes("mergelens:review") ||
+    note.includes("mergelens:summary") ||
+    note.includes("mergelens AI 审查")
+  );
+}
+
 /** 去掉 @bot / 触发词，留下真正的问题。 */
 export function stripMention(note: string, mentions: string[]): string {
   let out = note;
@@ -29,10 +42,12 @@ export async function answerMention(
   opts: { question: string; author: string; discussionId?: string },
 ): Promise<void> {
   const gl = new GitLab(cfg);
-  const reply = (body: string): Promise<unknown> =>
-    opts.discussionId
+  const reply = (raw: string): Promise<unknown> => {
+    const body = raw + REPLY_MARK; // 隐形标记：识别自身输出、防自我循环
+    return opts.discussionId
       ? gl.postDiscussionReply(project, iid, opts.discussionId, body).catch(() => gl.postMrNote(project, iid, body))
       : gl.postMrNote(project, iid, body);
+  };
 
   const q = opts.question;
 
