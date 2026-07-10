@@ -1,5 +1,5 @@
 import type { Config, Skill } from "./types.js";
-import type { FeedbackRecord, ReviewRecord } from "./store.js";
+import type { FeedbackRecord, MemoryRecord, ReviewRecord } from "./store.js";
 
 const esc = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -12,6 +12,8 @@ export function renderDashboard(
   risky: Array<{ file: string; total: number; critical: number; project?: string }> = [],
   projects: string[] = [],
   selected = "",
+  rangeDays = 14,
+  memory: MemoryRecord[] = [],
 ): string {
   const fSum = (f: (r: FeedbackRecord) => number) => feedback.reduce((s, r) => s + f(r), 0);
   const fbFindings = fSum((r) => r.findings);
@@ -26,27 +28,75 @@ export function renderDashboard(
   const needsWork = records.filter((r) => r.verdict === "needs-work").length;
   const blockRate = total > 0 ? Math.round((needsWork / total) * 100) : 0;
 
-  // 最近 14 天每日审查数
-  const days: { label: string; count: number }[] = [];
-  for (let i = 13; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 86400_000);
-    const key = d.toISOString().slice(0, 10);
-    days.push({
+  // 时间分桶：≤31 天按日，更长按周（保持柱数可读）
+  const daily = rangeDays <= 31;
+  const unitMs = (daily ? 1 : 7) * 86400_000;
+  const nBuckets = daily ? rangeDays : Math.ceil(rangeDays / 7);
+  const buckets: { label: string; from: number; to: number }[] = [];
+  for (let i = nBuckets - 1; i >= 0; i--) {
+    const to = Date.now() - i * unitMs;
+    const d = new Date(to);
+    buckets.push({
       label: `${d.getMonth() + 1}/${d.getDate()}`,
-      count: records.filter((r) => r.ts.slice(0, 10) === key).length,
+      from: to - unitMs,
+      to,
     });
   }
-  const maxDay = Math.max(1, ...days.map((d) => d.count));
-  const bars = days.map((d, i) => {
-    // 零值日画 4px 短桩占位，避免整列消失
-    const h = d.count > 0 ? Math.max(6, Math.round((d.count / maxDay) * 96)) : 4;
-    const x = i * 44;
-    return `<g>
-      <rect x="${x + 6}" y="${110 - h}" width="32" height="${h}" rx="3" fill="var(--accent)" opacity="${d.count ? 0.85 : 0.18}"></rect>
-      ${d.count ? `<text x="${x + 22}" y="${102 - h}" text-anchor="middle" font-size="11" font-weight="700" fill="var(--ink)">${d.count}</text>` : ""}
-      <text x="${x + 22}" y="126" text-anchor="middle" font-size="10" fill="var(--ink3)">${d.label}</text>
-    </g>`;
-  }).join("");
+  const inBucket = (ts: string, b: { from: number; to: number }): boolean => {
+    const t = Date.parse(ts);
+    return t > b.from && t <= b.to;
+  };
+  // 通用柱状图：自适应柱宽 + 零值短桩 + 稀疏刻度
+  const barChart = (values: number[], fmt: (v: number) => string): string => {
+    const W = 616;
+    const slot = W / nBuckets;
+    const bw = Math.max(8, Math.min(34, slot - 8));
+    const maxV = Math.max(1, ...values);
+    const labelEvery = Math.ceil(nBuckets / 12);
+    return values.map((v, i) => {
+      const h = v > 0 ? Math.max(6, Math.round((v / maxV) * 96)) : 4;
+      const cx = i * slot + slot / 2;
+      return `<g>
+        <rect x="${(cx - bw / 2).toFixed(1)}" y="${110 - h}" width="${bw.toFixed(1)}" height="${h}" rx="3" fill="var(--accent)" opacity="${v ? 0.85 : 0.18}"></rect>
+        ${v && nBuckets <= 16 ? `<text x="${cx.toFixed(1)}" y="${102 - h}" text-anchor="middle" font-size="11" font-weight="700" fill="var(--ink)">${fmt(v)}</text>` : ""}
+        ${i % labelEvery === 0 || i === nBuckets - 1 ? `<text x="${cx.toFixed(1)}" y="126" text-anchor="middle" font-size="10" fill="var(--ink3)">${buckets[i].label}</text>` : ""}
+      </g>`;
+    }).join("");
+  };
+  const reviewCounts = buckets.map((b) => records.filter((r) => inBucket(r.ts, b)).length);
+  const tokenSums = buckets.map((b) =>
+    records.filter((r) => inBucket(r.ts, b)).reduce((s, r) => s + (r.tokensIn ?? 0) + (r.tokensOut ?? 0), 0));
+  const bars = barChart(reviewCounts, String);
+  const tokenBars = barChart(tokenSums, (v) => (v / 10000).toFixed(1));
+  const hasTokens = tokenSums.some((v) => v > 0);
+
+  // 按项目分布（全部项目视图才显示）
+  const byProject = [...new Set(records.map((r) => r.project))]
+    .map((p) => {
+      const rs = records.filter((r) => r.project === p);
+      return { p, n: rs.length, findings: rs.reduce((s, r) => s + r.critical + r.serious + r.suggestion, 0) };
+    })
+    .sort((a, b) => b.n - a.n).slice(0, 8);
+  const maxProjN = Math.max(1, ...byProject.map((x) => x.n));
+
+  // 发现按审查维度（skill）分布，取时间范围内的记忆库记录
+  const rangeFrom = Date.now() - rangeDays * 86400_000;
+  const memInRange = memory.filter((m) => Date.parse(m.ts) >= rangeFrom);
+  const bySkill = [...new Set(memInRange.map((m) => m.skill))]
+    .map((s) => {
+      const ms = memInRange.filter((m) => m.skill === s);
+      return { s, n: ms.length, hi: ms.filter((m) => m.severity === "critical" || m.severity === "serious").length };
+    })
+    .sort((a, b) => b.n - a.n).slice(0, 10);
+  const maxSkillN = Math.max(1, ...bySkill.map((x) => x.n));
+
+  const hbar = (label: string, n: number, max: number, extra: string): string => `
+    <div style="display:flex;align-items:center;gap:10px;padding:4px 0;font-size:12.5px">
+      <span class="mono" style="width:150px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label)}</span>
+      <span style="flex:1;height:8px;background:var(--surface-2,rgba(128,128,128,.12));border-radius:4px;overflow:hidden">
+        <span style="display:block;height:100%;width:${Math.round((n / max) * 100)}%;background:var(--accent);border-radius:4px"></span></span>
+      <span class="mono" style="width:110px;text-align:right">${extra}</span>
+    </div>`;
 
   const SEV_ICON: Record<string, string> = { critical: "🔴", serious: "🟠", suggestion: "🟡" };
   const rows = records.slice(-20).reverse().map((r, idx) => {
@@ -123,14 +173,20 @@ function toggleDetail(i){
 </script></head><body><div class="wrap">
 <h1>merge<b>lens</b> · 审查看板
   <a href="/config" style="font-size:13px;font-weight:400;color:var(--accent);margin-left:10px">⚙ 配置</a>
-  <a href="/skills" style="font-size:13px;font-weight:400;color:var(--accent);margin-left:6px">🧩 Skills</a></h1>
+  <a href="/skills" style="font-size:13px;font-weight:400;color:var(--accent);margin-left:6px">🧩 Skills</a>
+  <a href="/logs" style="font-size:13px;font-weight:400;color:var(--accent);margin-left:6px">📜 日志</a></h1>
 <div class="sub">数据每 60s 自动刷新 · JSON API：<span class="mono">/api/reviews</span> · 健康检查：<span class="mono">/health</span></div>
-${projects.length > 1 ? `<div style="margin:-8px 0 18px">
-  <select class="mono" style="padding:5px 10px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink)"
-    onchange="location = this.value ? '/?project=' + encodeURIComponent(this.value) : '/'">
+<div style="margin:-8px 0 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+  ${projects.length > 1 ? `<select class="mono" style="padding:5px 10px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink)"
+    onchange="location = (this.value ? '/?project=' + encodeURIComponent(this.value) + '&' : '/?') + 'days=${rangeDays}'">
     <option value="">全部项目（${projects.length}）</option>
     ${projects.map((p) => `<option value="${esc(p)}"${p === selected ? " selected" : ""}>${esc(p)}</option>`).join("")}
-  </select></div>` : ""}
+  </select>` : ""}
+  ${[7, 14, 30, 90].map((d) => {
+    const url = `/?${selected ? "project=" + encodeURIComponent(selected) + "&" : ""}days=${d}`;
+    return `<a href="${url}" class="chip" style="text-decoration:none;${d === rangeDays ? "color:var(--good);font-weight:700;border-color:var(--good)" : ""}">${d} 天</a>`;
+  }).join("")}
+</div>
 
 <div class="tiles">
   <div class="card"><div class="k">累计审查</div><div class="v">${total}<small> 次（近7天 ${week.length}）</small></div></div>
@@ -153,9 +209,18 @@ ${projects.length > 1 ? `<div style="margin:-8px 0 18px">
 </div>
 
 <div class="grid">
-  <div class="card"><h3>最近 14 天审查量</h3>
-    <svg viewBox="0 0 616 132" role="img" aria-label="最近14天每日审查量柱状图">${bars}</svg>
+  <div class="card"><h3>最近 ${rangeDays} 天审查量${daily ? "" : "（按周聚合）"}</h3>
+    <svg viewBox="0 0 616 132" role="img" aria-label="审查量趋势柱状图">${bars}</svg>
   </div>
+  ${hasTokens ? `<div class="card"><h3>Token 消耗趋势（柱上数字为万）</h3>
+    <svg viewBox="0 0 616 132" role="img" aria-label="Token 消耗趋势柱状图">${tokenBars}</svg>
+  </div>` : ""}
+  ${!selected && byProject.length > 1 ? `<div class="card"><h3>按项目（审查次数 · 累计）</h3>
+    ${byProject.map((x) => hbar(x.p, x.n, maxProjN, `${x.n} 次 · ${x.findings} 发现`)).join("")}
+  </div>` : ""}
+  ${bySkill.length > 0 ? `<div class="card"><h3>发现按审查维度（最近 ${rangeDays} 天${selected ? " · " + esc(selected) : ""}）</h3>
+    ${bySkill.map((x) => hbar(x.s, x.n, maxSkillN, `${x.n} 条 · 高危严重 ${x.hi}`)).join("")}
+  </div>` : ""}
   ${risky.length > 0 ? `<div class="card"><h3>高风险文件（历史发现聚集，审查时自动从严）</h3>
     <table><thead><tr><th>文件</th><th>项目</th><th>历史发现</th><th>高危/严重</th></tr></thead><tbody>
     ${risky.slice(0, 8).map((f) => `<tr><td class="mono">${esc(f.file)}</td><td class="mono dim">${esc(f.project ?? "")}</td><td class="mono">${f.total}</td><td class="mono" style="color:${f.critical > 0 ? "var(--bad)" : "inherit"}">${f.critical}</td></tr>`).join("")}
@@ -342,6 +407,56 @@ async function commitRepo(){
   catch(e){ toast('提交失败：' + e.message); }
 }
 </script>
+</div></body></html>`;
+}
+
+/** 运行日志页：进程日志环形缓冲 + webhook 事件决策，10s 自动刷新。 */
+export function renderLogsPage(
+  logLines: string[],
+  events: Array<{ ts: string; kind: string; action?: string; project?: string; decision: string }>,
+): string {
+  const evRows = events.slice().reverse().map((e) => `<tr>
+    <td class="mono dim">${esc(e.ts.slice(5, 19).replace("T", " "))}</td>
+    <td class="mono">${esc(e.kind)}${e.action ? "/" + esc(e.action) : ""}</td>
+    <td class="mono">${esc(e.project ?? "")}</td>
+    <td class="${e.decision.includes("失败") || e.decision.includes("拒绝") ? "bad" : e.decision.startsWith("✓") || e.decision.includes("入队") || e.decision.startsWith("回复") ? "good" : "dim"}">${esc(e.decision)}</td>
+  </tr>`).join("") || `<tr><td colspan="4" class="dim">还没有收到任何 webhook 事件</td></tr>`;
+
+  return `<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="10">
+<title>mergelens · 运行日志</title>
+<style>
+:root{--page:#F4F6F5;--surface:#fff;--ink:#17241F;--ink3:#8A968F;--line:#E3E8E5;
+  --accent:#0E7A6E;--good:#0B7C3E;--bad:#C13333}
+@media(prefers-color-scheme:dark){:root{--page:#0E1412;--surface:#161D1A;--ink:#E7EDEA;
+  --ink3:#71807A;--line:#26302B;--accent:#3FBFAE;--good:#3FAE6A;--bad:#E06060}}
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--ink);
+  font:14px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:28px 20px 60px}
+h1{font-size:18px;margin:0}h1 b{color:var(--accent)}h1 a{color:var(--accent);font-size:13px;font-weight:400;margin-left:10px}
+.sub{color:var(--ink3);font-size:12px;margin:2px 0 18px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin-bottom:14px}
+.card h3{font-size:13px;margin:0 0 10px}
+.mono{font-family:Consolas,monospace;font-size:12px}.dim{color:var(--ink3)}
+.good{color:var(--good)}.bad{color:var(--bad)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+td{padding:5px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+pre{background:var(--page);border-radius:8px;padding:12px;overflow-x:auto;
+  font-size:11.5px;line-height:1.7;max-height:480px;overflow-y:auto;margin:0;white-space:pre-wrap}
+</style></head><body><div class="wrap">
+<h1>merge<b>lens</b> · 运行日志 <a href="/">← 返回看板</a></h1>
+<div class="sub">每 10s 自动刷新 · webhook 事件保留最近 30 条 · 进程日志保留最近 500 行（服务启动后累计）</div>
+
+<div class="card"><h3>Webhook 事件与处理决定（最新在前）</h3>
+  <div style="overflow-x:auto"><table><tbody>${evRows}</tbody></table></div>
+</div>
+
+<div class="card"><h3>进程日志（最新在后）</h3>
+  <pre>${esc(logLines.join("\n") || "（本次启动后还没有日志）")}</pre>
+</div>
+<script>document.querySelector('pre').scrollTop = 1e9;</script>
 </div></body></html>`;
 }
 

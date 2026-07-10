@@ -8,7 +8,7 @@ import { listBuiltinFiles, parseSkill, skillsRoot, REPO_SKILLS_DIR } from "./ski
 import { join } from "node:path";
 import { readFeedback, readMemory, readReviews } from "./store.js";
 import { riskyFiles } from "./memory.js";
-import { renderConfigPage, renderDashboard, renderSkillsPage } from "./web.js";
+import { renderConfigPage, renderDashboard, renderLogsPage, renderSkillsPage } from "./web.js";
 import { answerMention, stripMention } from "./assistant.js";
 import { collectFeedback } from "./feedback.js";
 
@@ -25,10 +25,16 @@ function json(res: ServerResponse, code: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
-/** 配置写操作的口令保护：设置了 ADMIN_TOKEN 才校验。 */
+/** 配置写操作的口令保护：设置了 ADMIN_TOKEN 才校验（支持 header 或 ?token= 查询参数，后者供浏览器页面使用）。 */
 function adminOk(req: IncomingMessage): boolean {
   const t = process.env.ADMIN_TOKEN;
-  return !t || req.headers["x-admin-token"] === t;
+  if (!t) return true;
+  if (req.headers["x-admin-token"] === t) return true;
+  try {
+    return new URL(req.url ?? "", "http://x").searchParams.get("token") === t;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -48,6 +54,16 @@ export function startServer(cfg: Config, port: number): void {
     if (recentEvents.length > 30) recentEvents.shift();
     console.error(`[webhook] ${e.kind}${e.action ? "/" + e.action : ""} ${e.project ?? ""} → ${e.decision}`);
   };
+  // 进程日志环形缓冲（/logs 页数据源）：拦截 console.error，保留最近 500 行
+  const logBuf: string[] = [];
+  const origErr = console.error.bind(console);
+  console.error = (...args: unknown[]): void => {
+    const line = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+    logBuf.push(`${new Date().toISOString().slice(5, 19).replace("T", " ")} ${line}`);
+    if (logBuf.length > 500) logBuf.shift();
+    origErr(...args);
+  };
+
   // bot 自己的用户名（@提及检测、过滤自己发的评论），首次用到时拉取
   let botUser: string | null = null;
   const getBotUser = async (): Promise<string> =>
@@ -89,7 +105,9 @@ export function startServer(cfg: Config, port: number): void {
   const server = createServer((req, res) => {
     if (req.method === "GET" && (req.url === "/" || req.url?.startsWith("/?") || req.url === "/dashboard")) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      const selected = new URL(req.url!, "http://x").searchParams.get("project") ?? "";
+      const q = new URL(req.url!, "http://x").searchParams;
+      const selected = q.get("project") ?? "";
+      const rangeDays = Math.min(365, Math.max(7, parseInt(q.get("days") ?? "14", 10) || 14));
       let reviews = readReviews();
       let feedback = readFeedback();
       const projects = [...new Set(reviews.map((r) => r.project))].sort();
@@ -98,11 +116,20 @@ export function startServer(cfg: Config, port: number): void {
         feedback = feedback.filter((r) => r.project === selected);
       }
       const mem = readMemory();
+      const memSel = selected ? mem.filter((m) => m.project === selected) : mem;
       const risky = (selected ? [selected] : [...new Set(mem.map((m) => m.project))])
         .flatMap((p) => riskyFiles(mem, p, 2, 8).map((f) => ({ ...f, project: p })))
         .sort((a, b) => b.critical - a.critical || b.total - a.total)
         .slice(0, 8);
-      return void res.end(renderDashboard(reviews, feedback, cfg, risky, projects, selected));
+      return void res.end(renderDashboard(reviews, feedback, cfg, risky, projects, selected, rangeDays, memSel));
+    }
+    if (req.method === "GET" && req.url?.split("?")[0] === "/logs") {
+      if (process.env.ADMIN_TOKEN && !adminOk(req)) {
+        res.writeHead(401, { "content-type": "text/plain; charset=utf-8" });
+        return void res.end("需要口令：/logs?token=<ADMIN_TOKEN>");
+      }
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      return void res.end(renderLogsPage(logBuf, recentEvents));
     }
     if (req.method === "GET" && req.url === "/config") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -329,7 +356,7 @@ export function startServer(cfg: Config, port: number): void {
 
   server.listen(port, () => {
     console.error(`mergelens 服务已启动：http://0.0.0.0:${port}/`);
-    console.error(`  看板 /  ·  配置页 /config  ·  Webhook /webhook  ·  健康检查 /health  ·  数据 /api/reviews`);
+    console.error(`  看板 /  ·  配置 /config  ·  Skills /skills  ·  日志 /logs  ·  Webhook /webhook  ·  健康检查 /health`);
     if (!process.env.ADMIN_TOKEN) {
       console.error(`  提示：未设置 ADMIN_TOKEN，配置页的保存操作不需要口令（内网可接受，公网请设置）`);
     }
