@@ -17,6 +17,7 @@ export class GitLab {
         ...(body ? { "content-type": "application/json" } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30_000), // 无超时的 fetch 会永远挂起且无日志
     });
     if (!res.ok) {
       throw new Error(`GitLab ${method} ${path} → ${res.status}: ${(await res.text()).slice(0, 300)}`);
@@ -59,7 +60,7 @@ export class GitLab {
   /** 仓库单文件原文（404 时抛错）。 */
   async getRawFile(project: string | number, path: string, ref: string): Promise<string> {
     const url = `${this.base}/projects/${this.proj(project)}/repository/files/${encodeURIComponent(path)}/raw?ref=${encodeURIComponent(ref)}`;
-    const res = await fetch(url, { headers: { "PRIVATE-TOKEN": this.token } });
+    const res = await fetch(url, { headers: { "PRIVATE-TOKEN": this.token }, signal: AbortSignal.timeout(30_000) });
     if (!res.ok) throw new Error(`GitLab GET ${path} → ${res.status}`);
     return res.text();
   }

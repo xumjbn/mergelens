@@ -282,6 +282,8 @@ export function startServer(cfg: Config, port: number): void {
             track({ ts, kind, project: projectPath, decision: "忽略：非 MR 下的评论" });
             return;
           }
+          // 一到达就留痕（同步执行）——后续任何一步卡住都能在 /logs 看到停在哪
+          track({ ts, kind, project: `${projectPath}!${mrIid}`, decision: `收到评论事件（@${event.user?.username ?? "?"}），判断是否触发…` });
           void (async () => {
             try {
               let bot = "";

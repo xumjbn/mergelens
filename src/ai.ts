@@ -88,6 +88,7 @@ async function callOnce(
         system,
         messages: [{ role: "user", content: user }],
       }),
+      signal: AbortSignal.timeout(300_000),
     });
     if (!res.ok) throw new Error(`anthropic ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const data: any = await res.json();
@@ -119,6 +120,7 @@ async function callOnce(
         { role: "user", content: user },
       ],
     }),
+    signal: AbortSignal.timeout(300_000),
   });
   if (!res.ok) throw new Error(`${ai.provider} ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const data: any = await res.json();
