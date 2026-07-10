@@ -15,6 +15,7 @@ const HELP = `mergelens — GitLab AI 代码审查助手
   mergelens review <project> <mr-iid> [--dry-run] [--full] [--create-issues]
                                                     审查 MR（--create-issues 高危/严重发现自动转 Issue）
   mergelens stats                                   审查记录统计（数据在 data/reviews.jsonl）
+  mergelens fix-project <旧键> <新键>               历史数据项目键改写（如 221 → group/name）
   mergelens changelog <project> [--days 14] [--target 分支]   从已合并 MR 生成发布说明
   mergelens heatmap <project>                       风险热力：高危文件 + 惯犯问题模式
   mergelens summarize <project> <mr-iid> [--dry-run] [--update-desc]   生成 MR 摘要
@@ -237,6 +238,18 @@ async function main(): Promise<void> {
       console.log("\n惯犯问题模式（出现 ≥2 次，审查时自动提级）：");
       if (patterns.length === 0) console.log("  暂无");
       for (const p of patterns) console.log(`  ${String(p.count).padStart(3)} 次  ${p.title}`);
+      break;
+    }
+
+    case "fix-project": {
+      const [oldKey, newKey] = rest;
+      if (!oldKey || !newKey) throw new Error("用法：mergelens fix-project 221 fhmc-pro/business/fhmc-network-mgr");
+      const { rewriteProjectKey } = await import("./store.js");
+      const changed = rewriteProjectKey(oldKey, newKey);
+      for (const [file, n] of Object.entries(changed)) {
+        console.log(`  ${file}: 改写 ${n} 条${n > 0 ? "（原文件已备份为 .bak）" : ""}`);
+      }
+      console.log(`完成：${oldKey} → ${newKey}。刷新看板即可看到合并后的数据。`);
       break;
     }
 

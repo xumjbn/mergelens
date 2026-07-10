@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -99,6 +99,37 @@ export interface SkillOutcome {
 
 export const recordSkillOutcomes = (r: SkillOutcome[]): void => r.forEach((x) => appendJsonl("skill-stats.jsonl", x));
 export const readSkillOutcomes = (): SkillOutcome[] => readJsonl<SkillOutcome>("skill-stats.jsonl");
+
+/**
+ * 历史数据迁移：把旧项目键（如数字 id "221"）统一改写为新键（路径）。
+ * 修复 v0.17.0 之前 webhook 用数字 id 记账导致的同项目数据分裂。
+ */
+export function rewriteProjectKey(oldKey: string, newKey: string): Record<string, number> {
+  const files = ["reviews.jsonl", "feedback.jsonl", "memory.jsonl", "skill-stats.jsonl"];
+  const changed: Record<string, number> = {};
+  for (const file of files) {
+    const f = join(dataDir(), file);
+    if (!existsSync(f)) continue;
+    let n = 0;
+    const lines = readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => {
+      try {
+        const obj = JSON.parse(l);
+        if (obj.project === oldKey) {
+          obj.project = newKey;
+          n++;
+          return JSON.stringify(obj);
+        }
+      } catch { /* 非法行原样保留 */ }
+      return l;
+    });
+    if (n > 0) {
+      writeFileSync(f + ".bak", readFileSync(f)); // 迁移前备份
+      writeFileSync(f, lines.join("\n") + "\n", "utf8");
+    }
+    changed[file] = n;
+  }
+  return changed;
+}
 
 /** stats 命令的汇总输出。 */
 export function formatStats(records: ReviewRecord[]): string {

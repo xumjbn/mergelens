@@ -356,6 +356,26 @@ t("@提及/触发词剥离", () => {
   assert.equal(stripMention("请 @review-bot 看看 @ai", ["@review-bot", "@ai"]), "请  看看");
 });
 
+/* ---- 项目键迁移 ---- */
+import { rewriteProjectKey } from "../src/store.js";
+import { writeFileSync as wfs, readFileSync as rfs } from "node:fs";
+
+t("fix-project：历史项目键改写与备份", () => {
+  const dir = mkdtempSync(pjoin(tmpdir(), "mergelens-mig-"));
+  process.env.MERGELENS_DATA = dir;
+  wfs(pjoin(dir, "reviews.jsonl"),
+    '{"ts":"t","project":"221","iid":38,"title":"a"}\n{"ts":"t","project":"g/other","iid":1,"title":"b"}\n');
+  wfs(pjoin(dir, "memory.jsonl"), '{"ts":"t","project":"221","iid":38,"file":"x","severity":"critical","title":"y","skill":"s"}\n');
+  const changed = rewriteProjectKey("221", "g/repo");
+  assert.equal(changed["reviews.jsonl"], 1);
+  assert.equal(changed["memory.jsonl"], 1);
+  const back = rfs(pjoin(dir, "reviews.jsonl"), "utf8");
+  assert.ok(back.includes('"project":"g/repo"'));
+  assert.ok(back.includes('"project":"g/other"')); // 无关项目不动
+  assert.ok(rfs(pjoin(dir, "reviews.jsonl.bak"), "utf8").includes('"project":"221"')); // 有备份
+  delete process.env.MERGELENS_DATA;
+});
+
 /* ---- json extraction ---- */
 t("extractJson 容错", () => {
   assert.deepEqual(extractJson("前置说明\n```json\n[{\"a\":1}]\n```"), [{ a: 1 }]);
