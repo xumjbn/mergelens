@@ -1,5 +1,8 @@
+import { createRequire } from "node:module";
 import type { Config, Skill } from "./types.js";
 import type { FeedbackRecord, MemoryRecord, ReviewRecord } from "./store.js";
+
+const VERSION: string = createRequire(import.meta.url)("../package.json").version;
 
 const esc = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -175,7 +178,7 @@ function toggleDetail(i){
   <a href="/config" style="font-size:13px;font-weight:400;color:var(--accent);margin-left:10px">⚙ 配置</a>
   <a href="/skills" style="font-size:13px;font-weight:400;color:var(--accent);margin-left:6px">🧩 Skills</a>
   <a href="/logs" style="font-size:13px;font-weight:400;color:var(--accent);margin-left:6px">📜 日志</a></h1>
-<div class="sub">数据每 60s 自动刷新 · JSON API：<span class="mono">/api/reviews</span> · 健康检查：<span class="mono">/health</span></div>
+<div class="sub">v${VERSION} · 数据每 60s 自动刷新 · JSON API：<span class="mono">/api/reviews</span> · 健康检查：<span class="mono">/health</span></div>
 <div style="margin:-8px 0 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
   ${projects.length > 1 ? `<select class="mono" style="padding:5px 10px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink)"
     onchange="location = (this.value ? '/?project=' + encodeURIComponent(this.value) + '&' : '/?') + 'days=${rangeDays}'">
@@ -212,15 +215,21 @@ function toggleDetail(i){
   <div class="card"><h3>最近 ${rangeDays} 天审查量${daily ? "" : "（按周聚合）"}</h3>
     <svg viewBox="0 0 616 132" role="img" aria-label="审查量趋势柱状图">${bars}</svg>
   </div>
-  ${hasTokens ? `<div class="card"><h3>Token 消耗趋势（柱上数字为万）</h3>
-    <svg viewBox="0 0 616 132" role="img" aria-label="Token 消耗趋势柱状图">${tokenBars}</svg>
+  <div class="card"><h3>Token 消耗趋势（柱上数字为万）</h3>
+    ${hasTokens
+      ? `<svg viewBox="0 0 616 132" role="img" aria-label="Token 消耗趋势柱状图">${tokenBars}</svg>`
+      : `<p class="dim" style="font-size:12.5px;margin:6px 0">该时间范围内暂无 token 数据。v0.15 之前的审查记录没有 token 字段，升级后新的审查会自动记录。</p>`}
+  </div>
+  ${!selected ? `<div class="card"><h3>按项目（审查次数 · 累计）</h3>
+    ${byProject.length > 0
+      ? byProject.map((x) => hbar(x.p, x.n, maxProjN, `${x.n} 次 · ${x.findings} 发现`)).join("")
+      : `<p class="dim" style="font-size:12.5px;margin:6px 0">还没有审查记录。</p>`}
   </div>` : ""}
-  ${!selected && byProject.length > 1 ? `<div class="card"><h3>按项目（审查次数 · 累计）</h3>
-    ${byProject.map((x) => hbar(x.p, x.n, maxProjN, `${x.n} 次 · ${x.findings} 发现`)).join("")}
-  </div>` : ""}
-  ${bySkill.length > 0 ? `<div class="card"><h3>发现按审查维度（最近 ${rangeDays} 天${selected ? " · " + esc(selected) : ""}）</h3>
-    ${bySkill.map((x) => hbar(x.s, x.n, maxSkillN, `${x.n} 条 · 高危严重 ${x.hi}`)).join("")}
-  </div>` : ""}
+  <div class="card"><h3>发现按审查维度（最近 ${rangeDays} 天${selected ? " · " + esc(selected) : ""}）</h3>
+    ${bySkill.length > 0
+      ? bySkill.map((x) => hbar(x.s, x.n, maxSkillN, `${x.n} 条 · 高危严重 ${x.hi}`)).join("")
+      : `<p class="dim" style="font-size:12.5px;margin:6px 0">该时间范围内没有发现沉淀。说明：只有正式发布（非 dry-run）的审查发现会进入记忆库统计。</p>`}
+  </div>
   ${risky.length > 0 ? `<div class="card"><h3>高风险文件（历史发现聚集，审查时自动从严）</h3>
     <table><thead><tr><th>文件</th><th>项目</th><th>历史发现</th><th>高危/严重</th></tr></thead><tbody>
     ${risky.slice(0, 8).map((f) => `<tr><td class="mono">${esc(f.file)}</td><td class="mono dim">${esc(f.project ?? "")}</td><td class="mono">${f.total}</td><td class="mono" style="color:${f.critical > 0 ? "var(--bad)" : "inherit"}">${f.critical}</td></tr>`).join("")}
@@ -447,7 +456,7 @@ pre{background:var(--page);border-radius:8px;padding:12px;overflow-x:auto;
   font-size:11.5px;line-height:1.7;max-height:480px;overflow-y:auto;margin:0;white-space:pre-wrap}
 </style></head><body><div class="wrap">
 <h1>merge<b>lens</b> · 运行日志 <a href="/">← 返回看板</a></h1>
-<div class="sub">每 10s 自动刷新 · webhook 事件保留最近 30 条 · 进程日志保留最近 500 行（服务启动后累计）</div>
+<div class="sub">v${VERSION} · 每 10s 自动刷新 · webhook 事件保留最近 30 条 · 进程日志保留最近 500 行（服务启动后累计）</div>
 
 <div class="card"><h3>Webhook 事件与处理决定（最新在前）</h3>
   <div style="overflow-x:auto"><table><tbody>${evRows}</tbody></table></div>
