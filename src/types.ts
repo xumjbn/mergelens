@@ -65,6 +65,11 @@ export interface ReviewConfig {
 export interface NotifyConfig {
   /** all=每次审查都推 / needs-work=只推有门禁级问题的（默认）/ off */
   on: "all" | "needs-work" | "off";
+  /**
+   * 钉钉机器人「自定义关键词」安全模式时必填：消息会自动带上该词。
+   * 机器人用「加签」模式时留空即可。
+   */
+  dingtalkKeyword: string;
 }
 
 export interface AssistantConfig {

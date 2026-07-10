@@ -27,7 +27,7 @@ const DEFAULTS = {
     vote: "off" as const,
     dailyTokenBudget: 0,
   },
-  notify: { on: "needs-work" as const },
+  notify: { on: "needs-work" as const, dingtalkKeyword: "" },
   assistant: { trigger: "@ai" },
 };
 
@@ -64,7 +64,10 @@ export function mergeFileConfig(base: Config, fileCfg: any): Config {
       vote: r.vote ?? base.review.vote,
       dailyTokenBudget: r.daily_token_budget ?? r.dailyTokenBudget ?? base.review.dailyTokenBudget,
     },
-    notify: { on: fileCfg?.notify?.on ?? base.notify.on },
+    notify: {
+      on: fileCfg?.notify?.on ?? base.notify.on,
+      dingtalkKeyword: fileCfg?.notify?.dingtalk_keyword ?? fileCfg?.notify?.dingtalkKeyword ?? base.notify.dingtalkKeyword,
+    },
     assistant: { trigger: fileCfg?.assistant?.trigger ?? base.assistant.trigger },
   };
 }

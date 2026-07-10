@@ -357,4 +357,14 @@ t("extractJson 容错", () => {
   assert.deepEqual(extractJson("[]"), []);
 });
 
+t("extractJson 抢救截断的数组", () => {
+  // 模拟 max_tokens 截断：第二个对象只写了一半
+  const truncated = '[\n{"file":"a.go","line":1,"title":"完整的发现"},\n{"file":"b.go","line":2,"title":"被截断';
+  const arr = extractJson<any[]>(truncated);
+  assert.equal(arr.length, 1);
+  assert.equal(arr[0].title, "完整的发现");
+  // 完全没有完整对象时仍然报错
+  assert.throws(() => extractJson('[{"file":"未闭合'));
+});
+
 console.log(`\n${passed} 个测试全部通过`);

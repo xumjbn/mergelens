@@ -77,7 +77,11 @@ export async function notifyReview(cfg: Config, p: NotifyPayload): Promise<void>
       const ts = Date.now();
       url += `&timestamp=${ts}&sign=${dingtalkSign(secret, ts)}`;
     }
-    tasks.push(post(url, { msgtype: "markdown", markdown: { title, text } }, "钉钉"));
+    // 机器人「自定义关键词」安全模式：消息必须包含关键词，否则 310000 关键词不匹配
+    const kw = (cfg.notify.dingtalkKeyword ?? "").trim() || process.env.DINGTALK_KEYWORD || "";
+    const dTitle = kw && !title.includes(kw) ? `${kw} ${title}` : title;
+    const dText = kw && !text.includes(kw) ? `${kw}\n\n${text}` : text;
+    tasks.push(post(url, { msgtype: "markdown", markdown: { title: dTitle, text: dText } }, "钉钉"));
   }
 
   const wecom = process.env.WECOM_WEBHOOK;

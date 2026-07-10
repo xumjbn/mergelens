@@ -45,7 +45,7 @@ function adminOk(req: IncomingMessage): boolean {
 export function startServer(cfg: Config, port: number): void {
   // serialize reviews per MR so a rapid push burst doesn't double-review
   const running = new Set<string>();
-  const queue: Array<{ project: number; iid: number; attempts?: number }> = [];
+  const queue: Array<{ project: string | number; iid: number; attempts?: number }> = [];
   const MAX_ATTEMPTS = 3;
   // 最近 30 条 webhook 事件及处理决定，暴露在 /health 里方便排查「为什么没触发」
   const recentEvents: Array<{ ts: string; kind: string; action?: string; project?: string; decision: string }> = [];
@@ -302,7 +302,8 @@ export function startServer(cfg: Config, port: number): void {
                 return;
               }
               track({ ts, kind, project: `${projectPath}!${mrIid}`, decision: `回复 @${author} 的提问` });
-              await answerMention(cfg, event.project.id, mrIid, {
+              // 统一用路径做项目标识（与 CLI 一致，记忆库/统计不分裂成两个键）
+              await answerMention(cfg, event.project?.path_with_namespace ?? event.project.id, mrIid, {
                 question: stripMention(note, [bot ? `@${bot}` : "", trigger]),
                 author,
                 discussionId: attrs.discussion_id ?? undefined,
@@ -329,7 +330,7 @@ export function startServer(cfg: Config, port: number): void {
         // MR 合并：结算采纳反馈（resolve/👍/👎）
         if (action === "merge") {
           track({ ts, kind, action, project: `${projectPath}!${attrs.iid}`, decision: "MR 已合并，结算采纳反馈" });
-          void collectFeedback(cfg, event.project.id, attrs.iid)
+          void collectFeedback(cfg, event.project?.path_with_namespace ?? event.project.id, attrs.iid)
             .catch((err) => console.error("[feedback] 结算失败：" + (err as Error).message));
           return;
         }
@@ -339,10 +340,10 @@ export function startServer(cfg: Config, port: number): void {
           track({ ts, kind, action, project: projectPath, decision: `忽略：action=${action} 不触发审查（只响应 open/reopen/push 新提交/merge）` });
           return;
         }
-        const project = event.project?.id;
+        const project = event.project?.path_with_namespace ?? event.project?.id;
         const iid = attrs.iid;
         if (!project || !iid) {
-          track({ ts, kind, action, project: projectPath, decision: "忽略：事件缺少 project.id 或 iid" });
+          track({ ts, kind, action, project: projectPath, decision: "忽略：事件缺少 project 或 iid" });
           return;
         }
         track({ ts, kind, action, project: `${projectPath}!${iid}`, decision: "入队审查" });

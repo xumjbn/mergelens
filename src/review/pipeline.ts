@@ -215,13 +215,16 @@ async function reviewMrImpl(
     skills.map(async (skill) => {
       const perChunk = await Promise.all(
         chunkPrompts.map(async (prompt) => {
-          try {
-            const out = await chat(cfg.ai, reviewSystemPrompt(cfg, skill), prompt, { model: skill.model });
-            return extractJson<Omit<Finding, "skill">[]>(out);
-          } catch (err) {
-            console.error(`[review] skill ${skill.name} 失败：${(err as Error).message}`);
-            return [];
+          // 输出截断/为空导致解析失败时重试一次，再失败才放弃该分片
+          for (let attempt = 1; attempt <= 2; attempt++) {
+            try {
+              const out = await chat(cfg.ai, reviewSystemPrompt(cfg, skill), prompt, { model: skill.model });
+              return extractJson<Omit<Finding, "skill">[]>(out);
+            } catch (err) {
+              console.error(`[review] skill ${skill.name} 第 ${attempt} 次失败：${(err as Error).message.slice(0, 160)}${attempt === 1 ? "，重试" : ""}`);
+            }
           }
+          return [];
         }),
       );
       return perChunk.flat().map((f) => ({ ...f, skill: skill.name }));

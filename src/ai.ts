@@ -38,23 +38,32 @@ const OPENAI_COMPAT_BASE: Record<string, string> = {
   ollama: "http://localhost:11434/v1",
 };
 
-/** Unified chat call across providers. Returns assistant text. */
+/**
+ * Unified chat call across providers. Returns assistant text.
+ * 失败时逐级回退：指定模型（如轻量模型）→ 主模型 → 降级模型——
+ * 轻量模型配错名字不再让摘要/验证整条链路挂掉。
+ */
 export async function chat(
   ai: AiConfig,
   system: string,
   user: string,
   opts: ChatOptions = {},
 ): Promise<string> {
-  const model = opts.model ?? ai.model;
-  try {
-    return await callOnce(ai, model, system, user, opts);
-  } catch (err) {
-    if (ai.fallbackModel && ai.fallbackModel !== model) {
-      console.error(`[ai] ${model} 调用失败（${(err as Error).message}），降级到 ${ai.fallbackModel}`);
-      return callOnce(ai, ai.fallbackModel, system, user, opts);
+  const candidates = [opts.model ?? ai.model, ai.model, ai.fallbackModel]
+    .filter((m): m is string => !!m)
+    .filter((m, i, a) => a.indexOf(m) === i);
+  let lastErr: Error = new Error("no model configured");
+  for (let i = 0; i < candidates.length; i++) {
+    try {
+      return await callOnce(ai, candidates[i], system, user, opts);
+    } catch (err) {
+      lastErr = err as Error;
+      if (i < candidates.length - 1) {
+        console.error(`[ai] ${candidates[i]} 调用失败（${lastErr.message.slice(0, 140)}），改用 ${candidates[i + 1]}`);
+      }
     }
-    throw err;
   }
+  throw lastErr;
 }
 
 async function callOnce(
@@ -139,6 +148,18 @@ export function extractJson<T>(text: string): T {
     else if (ch === close) {
       depth--;
       if (depth === 0) return JSON.parse(body.slice(start, i + 1)) as T;
+    }
+  }
+  // 抢救式解析：输出被 max_tokens 截断的数组，砍到最后一个完整对象再闭合，保住已产出的部分
+  if (open === "[") {
+    const lastObj = body.lastIndexOf("}");
+    if (lastObj > start) {
+      try {
+        const repaired = body.slice(start, lastObj + 1).replace(/,\s*$/, "") + "]";
+        const arr = JSON.parse(repaired) as T;
+        console.error("[ai] 模型输出被截断，已抢救解析出前面完整的部分");
+        return arr;
+      } catch { /* 抢救失败走正常报错 */ }
     }
   }
   throw new Error("JSON 未闭合: " + body.slice(start, start + 200));
