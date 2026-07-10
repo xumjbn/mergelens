@@ -280,8 +280,13 @@ export function startServer(cfg: Config, port: number): void {
                 author,
                 discussionId: attrs.discussion_id ?? undefined,
               });
+              track({ ts: new Date().toISOString(), kind, project: `${projectPath}!${mrIid}`, decision: "✓ 已回复" });
             } catch (err) {
-              console.error("[assistant] 回复失败：" + (err as Error).message);
+              // 失败原因进 recentEvents，光看 /health 就能定位
+              track({
+                ts: new Date().toISOString(), kind, project: `${projectPath}!${mrIid}`,
+                decision: `回复失败：${(err as Error).message.slice(0, 180)}`,
+              });
             }
           })();
           return;
